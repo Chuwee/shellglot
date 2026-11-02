@@ -47,13 +47,13 @@ The `anthropic` provider needs the Anthropic Python SDK. The Homebrew package in
 **From a checkout:**
 
 ```sh
-./install.sh            # creates .venv with the Anthropic SDK and adds the shell hook to ~/.bashrc or ~/.zshrc
-./install.sh --no-rc    # same, without touching your rc file
+./install.sh        # creates .venv with a pinned Anthropic SDK and links shellglot into ~/.local/bin
+./install.sh --rc   # same, and adds the optional shell hook to ~/.bashrc or ~/.zshrc
 ```
 
 ### Shell hook
 
-The hook is optional. With it, a picked command lands on an editable line (bash) or in your next prompt (zsh) instead of the clipboard, it goes into your history, and you get `sglot` mode. Add this line to `~/.bashrc` (or `~/.zshrc`, with `zsh`); `install.sh` adds its own equivalent:
+The hook is optional. With it, a picked command lands on an editable line (bash) or in your next prompt (zsh) instead of the clipboard, it goes into your history, and you get `sglot` mode. Add this line to `~/.bashrc` (or `~/.zshrc`, with `zsh`), or run `./install.sh --rc`:
 
 ```sh
 eval "$(shellglot init bash)"
@@ -91,9 +91,16 @@ Settings live in `~/.config/shellglot/config.json` (mode 600):
 | `suggestions` | `3` | 1–9 |
 | `send_context` | `true` | sends your OS, shell, cwd and the names of up to 40 entries in cwd so suggestions fit your machine |
 
-## Privacy
+## Privacy and safety
 
-With `send_context` on, the model provider sees the current directory path and the names of the files in it. Turn it off in `shellglot config` if that matters. No command runs without you choosing it and pressing Enter.
+With `send_context` on, the model provider sees the current directory path and the names of the files in it. Turn it off in `shellglot config` if that matters.
+
+Treat suggestions as untrusted text from the model, and read a command before you run it:
+
+- No command runs without you choosing it and pressing Enter.
+- **⚠ destructive** comes from the model *or* from shellglot's own check of the command (`rm`, `sudo`, `> file`, `find -delete`, `git reset --hard`, piping into a shell, package installs and more). The check can only add the label, never remove it, but it is a heuristic: no label doesn't mean safe.
+- Anything the model writes is cleaned before it reaches your terminal: escape sequences and other control or invisible characters are shown as `�`. A suggested command containing any of them (including a newline or a bidi override) is dropped, so it can never be copied or put on your prompt.
+- With the `codex` provider, Codex runs in a read-only sandbox in a fresh empty directory, with its shell, code, browser, app and web search tools switched off, and shellglot stops it if it starts any tool call anyway.
 
 ## Releasing
 

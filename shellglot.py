@@ -2,6 +2,7 @@
 """shellglot: quick shell command suggestions from an LLM, with every part of the command explained."""
 
 import argparse
+import re
 import base64
 import getpass
 import itertools
@@ -14,6 +15,7 @@ import sys
 import tempfile
 import threading
 import time
+import unicodedata
 import urllib.error
 import urllib.request
 
@@ -280,6 +282,16 @@ def stream_demo(config, system, user):
 		yield text[i:i + 12]
 
 
+# Codex features that give the agent tools (shell, code execution, files, browser, apps...).
+CODEX_TOOL_FEATURES = [
+	'shell_tool', 'unified_exec', 'unified_exec_tty', 'code_mode_host', 'apps', 'plugins', 'remote_plugin',
+	'browser_use', 'browser_use_external', 'in_app_browser', 'computer_use', 'image_generation', 'view_image',
+	'goals', 'multi_agent', 'multi_agent_v2', 'skill_search', 'tool_suggest', 'sleep_tool',
+]
+# Codex event items that are only text; any other item (command_execution, file_change, mcp_tool_call...) is a tool call.
+CODEX_TEXT_ITEMS = {'agent_message', 'reasoning', 'error'}
+
+
 def stream_codex(config, system, user):
 	"""Run the local Codex CLI non-interactively, so requests use its ChatGPT login.
 
@@ -288,17 +300,23 @@ def stream_codex(config, system, user):
 	codex = shutil.which('codex')
 	if not codex:
 		raise ShellglotError('the codex CLI is not on PATH; install it or pick another provider with `shellglot config`')
+	# Codex is an agent, but shellglot only wants text. Layers, since none of them is complete on its own:
+	# a read-only sandbox, a fresh empty working directory, the tool features switched off, and (below)
+	# stopping Codex as soon as it starts any tool call anyway.
+	workdir = tempfile.TemporaryDirectory(prefix='shellglot-codex-')
 	command = [
 		codex, 'exec', '--json', '--ephemeral', '--skip-git-repo-check',
 		'--ignore-user-config', '--ignore-rules', '--sandbox', 'read-only',
-		# Run from an empty directory so Codex doesn't load AGENTS.md or repo context; shellglot sends its own.
-		'--cd', tempfile.gettempdir(),
+		'--cd', workdir.name,
 		'--model', config['model'],
+		'-c', 'web_search="disabled"',
 	]
+	for feature in CODEX_TOOL_FEATURES:
+		command += ['-c', f'features.{feature}=false']  # -c, unlike --disable, tolerates names an older Codex doesn't know
 	if config['effort']:
 		command += ['-c', f'model_reasoning_effort="{config["effort"]}"']
 	command.append('-')
-	prompt = f'{system}\n\nDo not run any tools or commands; answer directly.\n\n{user}'
+	prompt = f'{system}\n\nYou have no tools. Answer directly from the information below.\n\n{user}'
 	stderr = tempfile.TemporaryFile(mode='w+')
 	process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=stderr, text=True)
 	try:
@@ -311,6 +329,9 @@ def stream_codex(config, system, user):
 			except json.JSONDecodeError:
 				continue
 			item = event.get('item') or {}
+			if event.get('type') in ('item.started', 'item.updated', 'item.completed') and item.get('type') not in CODEX_TEXT_ITEMS:
+				process.kill()
+				raise ShellglotError(f'codex tried to use a tool ({item.get("type")}), so shellglot stopped it')
 			if event.get('type') == 'item.completed' and item.get('type') == 'agent_message':
 				yield item.get('text', '') + '\n'
 			elif event.get('type') in ('error', 'turn.failed'):
@@ -325,7 +346,9 @@ def stream_codex(config, system, user):
 	finally:
 		if process.poll() is None:
 			process.kill()
+			process.wait()
 		stderr.close()
+		workdir.cleanup()
 
 
 PROVIDERS = {'codex': stream_codex, 'anthropic': stream_anthropic, 'openai': stream_openai, 'demo': stream_demo}
@@ -356,8 +379,55 @@ def parse_line(line):
 		return None
 	if not isinstance(suggestion, dict) or not isinstance(suggestion.get('command'), str) or not suggestion['command'].strip():
 		return None
-	suggestion['requires'] = parse_requires(suggestion.get('requires'))
-	return suggestion
+	command = suggestion['command'].strip()
+	# The command gets copied or put on the prompt, so refuse it outright if it hides anything:
+	# control characters (escape sequences, newlines) or invisible formatting (bidi overrides, zero-width).
+	if any(unsafe_char(ch) for ch in command):
+		return None
+	parts = []
+	for part in suggestion.get('parts') if isinstance(suggestion.get('parts'), list) else []:
+		if isinstance(part, dict):
+			parts.append({'text': clean(part.get('text')), 'explain': clean(part.get('explain'))})
+	return {
+		'command': command,
+		'summary': clean(suggestion.get('summary')),
+		# The model's danger flag is a hint; shellglot's own check can only add to it.
+		'danger': suggestion.get('danger') is True or looks_dangerous(command),
+		'parts': parts,
+		'requires': parse_requires(suggestion.get('requires')),
+	}
+
+
+def unsafe_char(ch):
+	return unicodedata.category(ch) in ('Cc', 'Cf')
+
+
+def clean(value):
+	"""Make model text safe to print: no escape sequences, control or invisible formatting characters."""
+	if not isinstance(value, str):
+		return ''
+	return ''.join('\ufffd' if unsafe_char(ch) else ch for ch in value)
+
+
+# Shell commands that delete, overwrite, or change the system. Matched only where a command starts.
+_CMD = r'(?:^|[;&|(`]|\$\()\s*(?:(?:sudo|doas|env|nohup|time|nice|command|exec|xargs(?:\s+-\S+)*)\s+)*'
+DANGEROUS = re.compile('|'.join([
+	_CMD + r'(?:rm|rmdir|unlink|shred|dd|mkfs\S*|fdisk|sfdisk|parted|wipefs|mkswap|truncate|mv|chmod|chown|chgrp'
+		r'|kill|killall|pkill|reboot|shutdown|poweroff|halt|sudo|doas|su|crontab|iptables|nft|ufw'
+		r'|useradd|userdel|usermod|passwd|mount|umount|swapoff|systemctl|launchctl|diskutil)\b',
+	r'\s-delete\b', r'\s-exec(?:dir)?\s+(?:rm|shred|mv|chmod|chown)\b',
+	r'\bgit\s+(?:reset\s+--hard|clean\b|checkout\s+--?\s|restore\b|branch\s+-D|stash\s+(?:drop|clear)|push\b[^;&|]*\s(?:-f|--force\S*)\b)',
+	r'(?<![0-9&>])>\|?(?!>)(?!\s*(?:/dev/null\b|&))',  # > file overwrites it (not >>, not 2>, not >/dev/null)
+	r'\btee\s+(?!-a\b|--append\b)\S', r'\bsed\s+(?:-\w*\s+)*-i', r'\bperl\s+-\w*i',
+	r'\|\s*(?:sudo\s+)?(?:ba|z|da|k|fi)?sh\b',  # piping into a shell
+	r'\b(?:apt|apt-get|dnf|yum|zypper|pacman|brew|snap|flatpak|pip3?|pipx|npm|cargo)\s+(?:\S+\s+)*?(?:install|remove|purge|uninstall|autoremove|upgrade|-S\w*|-R\w*)\b',
+	r'\bdocker\s+(?:rm|rmi|kill|stop|system\s+prune|volume\s+(?:rm|prune)|image\s+prune|container\s+prune)\b',
+	r'\bkubectl\s+(?:delete|apply|replace|scale|drain)\b',
+]))
+
+
+def looks_dangerous(command):
+	return DANGEROUS.search(command) is not None
 
 
 def parse_requires(requires):
@@ -368,13 +438,13 @@ def parse_requires(requires):
 			item = {'program': item}
 		if not isinstance(item, dict) or not isinstance(item.get('program'), str) or not item['program'].strip():
 			continue
-		program = item['program'].strip()
+		program = clean(item['program'].strip())
 		if any(r['program'] == program for r in result):
 			continue
 		install = item.get('install')
 		result.append({
 			'program': program,
-			'install': install.strip() if isinstance(install, str) else '',
+			'install': clean(install.strip()) if isinstance(install, str) else '',
 			'installed': shutil.which(program) is not None,
 		})
 	return result
@@ -699,7 +769,7 @@ def main():
 		else:
 			suggest(' '.join(args.prompt), args.out)
 	except ShellglotError as e:
-		sys.stderr.write(f'\r\x1b[K {c("1;31", "shellglot:")} {e}\n')
+		sys.stderr.write(f'\r\x1b[K {c("1;31", "shellglot:")} {clean(str(e))}\n')
 		sys.exit(1)
 	except KeyboardInterrupt:
 		sys.stderr.write('\r\x1b[K')

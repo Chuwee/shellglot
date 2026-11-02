@@ -15,7 +15,7 @@ class Shellglot < Formula
   def install
     python = Formula["python@3.13"].opt_bin/"python3.13"
     system python, "-m", "venv", libexec
-    system libexec/"bin/pip", "install", "--quiet", "anthropic"
+    system libexec/"bin/pip", "install", "--quiet", "anthropic==2.3.0"
     system "make", "install", "PREFIX=#{prefix}", "PYTHON=#{libexec}/bin/python"
   end
 
