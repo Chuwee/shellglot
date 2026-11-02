@@ -16,6 +16,8 @@ import time
 import urllib.error
 import urllib.request
 
+__version__ = '0.1.0'
+
 CONFIG_DIR = os.path.join(os.environ.get('XDG_CONFIG_HOME') or os.path.expanduser('~/.config'), 'shellglot')
 CONFIG_PATH = os.path.join(CONFIG_DIR, 'config.json')
 OLD_CONFIG_DIR = os.path.join(os.path.dirname(CONFIG_DIR), 'bashglot')  # before the rename to shellglot
@@ -172,7 +174,8 @@ def stream_anthropic(config, system, user):
 	try:
 		import anthropic
 	except ImportError:
-		raise ShellglotError('the anthropic package is missing; run ./install.sh or `pip install anthropic`')
+		raise ShellglotError('the anthropic provider needs the Anthropic Python SDK: `sudo apt install python3-anthropic`, '
+			'`pip install anthropic`, or reinstall with ./install.sh; or pick another provider with `shellglot config`')
 	client_options = {}
 	if config['api_key']:
 		client_options['api_key'] = config['api_key']
@@ -578,18 +581,37 @@ def suggest(prompt, out_path):
 		sys.stderr.write(f'\r\x1b[K {c("2", "cancelled")}\n')
 
 
+def hook_path():
+	"""Find shellglot.sh: next to this script in a checkout and in packaged installs (where bin/shellglot links here)."""
+	path = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'shellglot.sh')
+	if not os.path.exists(path):
+		raise ShellglotError(f'cannot find the shell hook (looked for {path})')
+	return path
+
+
+def init(shell):
+	"""Print the line that loads shellglot into a shell, for `eval "$(shellglot init bash)"` in an rc file."""
+	import shlex
+	print(f'source {shlex.quote(hook_path())}')
+
+
 def main():
 	parser = argparse.ArgumentParser(prog='shellglot', description=__doc__)
+	parser.add_argument('--version', action='version', version=f'shellglot {__version__}')
 	sub = parser.add_subparsers(dest='action', required=True)
 	suggest_parser = sub.add_parser('suggest', help='suggest commands for a prompt')
 	suggest_parser.add_argument('--out', help='file to write the chosen command to')
 	suggest_parser.add_argument('prompt', nargs='+')
 	sub.add_parser('config', help='set the provider, model and key')
+	init_parser = sub.add_parser('init', help='print the shell hook; add `eval "$(shellglot init bash)"` to your rc file')
+	init_parser.add_argument('shell', choices=['bash', 'zsh'])
 	args = parser.parse_args()
 	try:
 		migrate_config()
 		if args.action == 'config':
 			configure()
+		elif args.action == 'init':
+			init(args.shell)
 		else:
 			suggest(' '.join(args.prompt), args.out)
 	except ShellglotError as e:

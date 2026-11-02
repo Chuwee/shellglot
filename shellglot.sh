@@ -1,16 +1,28 @@
 # shellglot shell integration for bash and zsh.
-# Source it from ~/.bashrc or ~/.zshrc (install.sh does this for you):
+# Load it from ~/.bashrc or ~/.zshrc. Installed with apt or brew:
+#   eval "$(shellglot init bash)"     # or zsh
+# From a checkout (install.sh does this for you):
 #   export SHELLGLOT_HOME=/path/to/shellglot
 #   source "$SHELLGLOT_HOME/shellglot.sh"
 
-if [ -z "$SHELLGLOT_HOME" ] && [ -n "$BASH_VERSION" ]; then
-	SHELLGLOT_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -z "$SHELLGLOT_HOME" ]; then
+	if [ -n "$BASH_VERSION" ]; then
+		SHELLGLOT_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+	elif [ -n "$ZSH_VERSION" ]; then
+		eval 'SHELLGLOT_HOME="${${(%):-%x}:A:h}"'
+	fi
 fi
 
 _shellglot_py() {
-	local py="$SHELLGLOT_HOME/.venv/bin/python"
-	[ -x "$py" ] || py=python3
-	"$py" "$SHELLGLOT_HOME/shellglot.py" "$@"
+	local script="$SHELLGLOT_HOME/shellglot.py"
+	if [ -x "$SHELLGLOT_HOME/.venv/bin/python" ]; then
+		"$SHELLGLOT_HOME/.venv/bin/python" "$script" "$@"
+	elif [ -x "$script" ]; then
+		# Packaged installs point the script's shebang at the right Python.
+		"$script" "$@"
+	else
+		python3 "$script" "$@"
+	fi
 }
 
 # Ask for suggestions, then put the chosen command on an editable line.

@@ -1,0 +1,149 @@
+# Release shellglot when a version tag (v1.2.3) is pushed:
+#   1. build the .deb and attach it to a GitHub release
+#   2. add it to the signed apt repository served by GitHub Pages from the gh-pages branch
+#   3. update the formula in the Homebrew tap (github.com/Chuwee/homebrew-shellglot)
+#
+# Secrets:
+#   APT_GPG_PRIVATE_KEY  ASCII-armored private key that signs the apt repository (no passphrase)
+#   HOMEBREW_TAP_TOKEN   fine-grained token with "Contents: read and write" on Chuwee/homebrew-shellglot
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  deb:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the tag matches the version in shellglot.py
+        run: |
+          version="$(make -s version)"
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match __version__ = '$version' in shellglot.py"
+            exit 1
+          fi
+
+      - name: Build the .deb
+        run: packaging/deb/build.sh
+
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/*.deb --title "$GITHUB_REF_NAME" --generate-notes
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deb
+          path: dist/*.deb
+
+  apt:
+    needs: deb
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: deb
+          path: new
+
+      - name: Check out the gh-pages branch (or start it)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          url="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          if git ls-remote --exit-code --heads "$url" gh-pages >/dev/null; then
+            git clone --depth 1 --branch gh-pages "$url" site
+          else
+            git init -b gh-pages site
+            git -C site remote add origin "$url"
+          fi
+
+      - name: Import the signing key
+        env:
+          APT_GPG_PRIVATE_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}
+        run: |
+          if [ -z "$APT_GPG_PRIVATE_KEY" ]; then
+            echo '::error::the APT_GPG_PRIVATE_KEY secret is not set'
+            exit 1
+          fi
+          printf '%s\n' "$APT_GPG_PRIVATE_KEY" | gpg --batch --import
+          echo "KEY_ID=$(gpg --batch --list-secret-keys --with-colons | awk -F: '/^fpr/ {print $10; exit}')" >>"$GITHUB_ENV"
+
+      - name: Rebuild the apt repository
+        working-directory: site
+        run: |
+          mkdir -p pool
+          cp ../new/*.deb pool/
+          apt-ftparchive packages pool >Packages
+          gzip -9kf Packages
+          apt-ftparchive \
+            -o APT::FTPArchive::Release::Origin=shellglot \
+            -o APT::FTPArchive::Release::Label=shellglot \
+            -o APT::FTPArchive::Release::Suite=stable \
+            -o APT::FTPArchive::Release::Architectures=all \
+            release . >../Release
+          mv ../Release Release
+          rm -f InRelease Release.gpg
+          gpg --batch --yes --default-key "$KEY_ID" --clearsign -o InRelease Release
+          gpg --batch --yes --default-key "$KEY_ID" -abs -o Release.gpg Release
+          gpg --batch --yes --export "$KEY_ID" >shellglot.gpg
+          gpg --batch --yes --armor --export "$KEY_ID" >shellglot.asc
+          touch .nojekyll
+          cat >index.html <<'HTML'
+          <!doctype html>
+          <meta charset="utf-8">
+          <title>shellglot apt repository</title>
+          <h1>shellglot apt repository</h1>
+          <pre>
+          curl -fsSL https://chuwee.github.io/shellglot/shellglot.gpg | sudo tee /usr/share/keyrings/shellglot.gpg >/dev/null
+          echo 'deb [signed-by=/usr/share/keyrings/shellglot.gpg] https://chuwee.github.io/shellglot ./' | sudo tee /etc/apt/sources.list.d/shellglot.list
+          sudo apt update && sudo apt install shellglot
+          </pre>
+          <p><a href="https://github.com/Chuwee/shellglot">github.com/Chuwee/shellglot</a>
+          HTML
+
+      - name: Publish
+        working-directory: site
+        run: |
+          git add -A
+          git commit -q -m "shellglot $GITHUB_REF_NAME"
+          git push origin gh-pages
+
+  homebrew:
+    needs: deb
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Update the formula in the tap
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [ -z "$HOMEBREW_TAP_TOKEN" ]; then
+            echo '::warning::HOMEBREW_TAP_TOKEN is not set, so the Homebrew tap was not updated'
+            exit 0
+          fi
+          version="${GITHUB_REF_NAME#v}"
+          sha256="$(curl -fsSL "https://github.com/${GITHUB_REPOSITORY}/archive/refs/tags/${GITHUB_REF_NAME}.tar.gz" | sha256sum | cut -d' ' -f1)"
+          git clone --depth 1 "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/Chuwee/homebrew-shellglot.git" tap
+          mkdir -p tap/Formula
+          sed -e '/^# Template for/d' -e '/^# The release workflow/d' \
+            -e "s/@VERSION@/${version}/" -e "s/@SHA256@/${sha256}/" \
+            packaging/homebrew/shellglot.rb >tap/Formula/shellglot.rb
+          cd tap
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add Formula/shellglot.rb
+          git commit -q -m "shellglot ${version}"
+          git push

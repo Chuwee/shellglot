@@ -24,6 +24,30 @@ Suggestions appear one by one as the model streams them. Pick one with its numbe
 
 ## Install
 
+**Homebrew** (macOS and Linux):
+
+```sh
+brew install chuwee/shellglot/shellglot
+```
+
+**apt** (Debian and Ubuntu):
+
+```sh
+curl -fsSL https://chuwee.github.io/shellglot/shellglot.gpg | sudo tee /usr/share/keyrings/shellglot.gpg >/dev/null
+echo 'deb [signed-by=/usr/share/keyrings/shellglot.gpg] https://chuwee.github.io/shellglot ./' | sudo tee /etc/apt/sources.list.d/shellglot.list
+sudo apt update && sudo apt install shellglot
+```
+
+Both packages install the `shellglot` program but leave your shell config alone. To turn it on, add this line to `~/.bashrc` (or `~/.zshrc`, with `zsh`):
+
+```sh
+eval "$(shellglot init bash)"
+```
+
+The `anthropic` provider needs the Anthropic Python SDK. The Homebrew package includes it; apt installs `python3-anthropic` when your distribution has it (Ubuntu 26.04 and later), and otherwise you can pick another provider.
+
+**From a checkout:**
+
 ```sh
 ./install.sh            # creates .venv with the Anthropic SDK and adds the hook to ~/.bashrc or ~/.zshrc
 ./install.sh --no-rc    # same, without touching your rc file
@@ -64,3 +88,11 @@ Settings live in `~/.config/shellglot/config.json` (mode 600):
 ## Privacy
 
 With `send_context` on, the model provider sees the current directory path and the names of the files in it. Turn it off in `shellglot config` if that matters. No command runs without you choosing it and pressing Enter.
+
+## Releasing
+
+Bump `__version__` in `shellglot.py`, then push a matching tag (`git tag v0.2.0 && git push origin v0.2.0`). The `release` workflow builds the `.deb`, attaches it to a GitHub release, adds it to the signed apt repository on the `gh-pages` branch (served by GitHub Pages), and updates the formula in [Chuwee/homebrew-shellglot](https://github.com/Chuwee/homebrew-shellglot). It needs two repository secrets: `APT_GPG_PRIVATE_KEY` (the key that signs the apt repository) and `HOMEBREW_TAP_TOKEN` (a fine-grained token that can write to the tap). Build a `.deb` locally with `packaging/deb/build.sh`.
+
+## License
+
+MIT
