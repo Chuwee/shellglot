@@ -45,14 +45,16 @@ SYSTEM_PROMPT = """You are shellglot, a shell expert that suggests commands for 
 Reply with ONLY newline-delimited JSON: exactly {n} lines, one JSON object per line, best suggestion first. No prose, no code fences, no blank lines.
 
 Each object has this shape:
-{{"command": "<the full command>", "summary": "<what it does, max 70 chars>", "danger": <true|false>, "requires": [{{"program": "<executable name>", "install": "<command that installs it on the user's OS>"}}], "parts": [{{"text": "<piece of the command>", "explain": "<what this piece does here, max 80 chars>"}}]}}
+{{"command": "<the full command>", "summary": "<what it does, max 70 chars>", "danger": <true|false>, "requires": [{{"program": "<executable name>", "install": "<command that installs it on the user's OS>"}}], "parts": [{{"text": "<piece of the command>", "origin": "<what its name stands for, or "">", "explain": "<what this piece does here, max 80 chars>"}}]}}
 
 Rules for "parts":
 - Split the command into meaningful pieces, in left-to-right order, covering the whole command.
 - Each "text" must be an exact substring of "command".
 - Use small pieces: the program name is its own piece, each path or argument is its own piece, and each flag is its own piece together with its value (e.g. "-name '*.log'", "--depth 1"). Never lump several flags into one piece.
+- Bundled short flags ("-xvzf") are written as in the command, but split into one piece per letter, with "text" being just that letter ("x", "v", "z", "f"); a value that follows (the archive after "f") is its own piece.
 - Pipes, redirects and operators are their own pieces ("|", "&&", "2>/dev/null", "> out.txt").
 - Explanations are specific to this usage, not generic man-page text.
+- "origin" says what a name is short for or where it comes from, so it's easier to remember: "ls" -> "list", "-v" -> "verbose", "-mtime" -> "modification time", "grep" -> "g/re/p: global regular expression print, an ed command", "chmod" -> "change mode", "awk" -> "Aho, Weinberger, Kernighan (its authors)". Max 60 chars. Most short flags and abbreviated program names have one: give it for each of them that you know. Mind that the same letter means different things per program (-v is "verbose" for tar but "invert match" for grep). Use "" when the name is already a plain word (find, sort, --verbose), for paths, values, operators and pipes, and when you don't actually know: never invent an origin.
 
 Rules for "requires":
 - List every program the command runs that is an external dependency: not part of a default install of the user's OS (e.g. fd, rg, jq, tree, htop, ffmpeg, pandoc on most Linux distros; brew-only tools on macOS). Shell builtins, coreutils, find, grep, sed, awk, tar, gzip, ps, etc. are standard and are not listed.
@@ -311,21 +313,21 @@ def stream_openai(config, system, user):
 
 DEMO_SUGGESTIONS = [
 	{'command': "find . -name '*.log' -mtime +7 -delete", 'summary': 'Delete .log files older than 7 days', 'danger': True, 'parts': [
-		{'text': 'find', 'explain': 'walk the directory tree looking for matches'},
+		{'text': 'find', 'origin': '', 'explain': 'walk the directory tree looking for matches'},
 		{'text': '.', 'explain': 'start from the current directory'},
 		{'text': "-name '*.log'", 'explain': 'only files whose name ends in .log'},
-		{'text': '-mtime +7', 'explain': 'last modified more than 7 days ago'},
+		{'text': '-mtime +7', 'origin': 'modification time', 'explain': 'last modified more than 7 days ago'},
 		{'text': '-delete', 'explain': 'remove every match (no confirmation!)'}], 'requires': []},
 	{'command': "find . -name '*.log' -mtime +7 -print", 'summary': 'Preview which .log files would be deleted', 'danger': False, 'parts': [
 		{'text': 'find .', 'explain': 'search from the current directory down'},
 		{'text': "-name '*.log'", 'explain': 'match names ending in .log'},
-		{'text': '-mtime +7', 'explain': 'older than 7 days'},
+		{'text': '-mtime +7', 'origin': 'modification time', 'explain': 'older than 7 days'},
 		{'text': '-print', 'explain': 'list the matches instead of deleting them'}], 'requires': []},
 	{'command': "fd -e log --changed-before 7d -x rm", 'summary': 'Same with fd', 'danger': True, 'parts': [
-		{'text': 'fd', 'explain': 'fast, friendly alternative to find'},
-		{'text': '-e log', 'explain': 'files with the .log extension'},
+		{'text': 'fd', 'origin': 'a short, fast "find"', 'explain': 'friendly alternative to find'},
+		{'text': '-e log', 'origin': 'extension', 'explain': 'files with the .log extension'},
 		{'text': '--changed-before 7d', 'explain': 'modified more than 7 days ago'},
-		{'text': '-x rm', 'explain': 'run rm on each result'}],
+		{'text': '-x rm', 'origin': 'exec; rm = remove', 'explain': 'run rm on each result'}],
 		'requires': [{'program': 'fd', 'install': 'sudo apt install fd-find'}]},
 ]
 
@@ -506,7 +508,7 @@ def parse_line(line):
 	parts = []
 	for part in suggestion.get('parts') if isinstance(suggestion.get('parts'), list) else []:
 		if isinstance(part, dict):
-			parts.append({'text': clean(part.get('text')), 'explain': clean(part.get('explain'))})
+			parts.append({'text': clean(part.get('text')), 'origin': clean(part.get('origin')), 'explain': clean(part.get('explain'))})
 	return {
 		'command': command,
 		'summary': clean(suggestion.get('summary')),
@@ -658,7 +660,9 @@ def render(number, suggestion, columns):
 		shown = text if len(text) <= width else text[:width - 1] + '…'
 		color = PART_COLORS[i % len(PART_COLORS)]
 		key = chr(ord('a') + i) if spans[i] else '·'
-		lines.append(f'{INDENT}{c("1;" + color, key)}  {c(color, shown.ljust(width))}  {c("2", str(part.get("explain", "")))}')
+		origin = str(part.get('origin') or '').strip()
+		origin = c('3;' + color, origin) + c('2', ' · ') if origin else ''  # italic, in the part's color
+		lines.append(f'{INDENT}{c("1;" + color, key)}  {c(color, shown.ljust(width))}  {origin}{c("2", str(part.get("explain", "")))}')
 
 	for r in requires:
 		if not r['installed']:

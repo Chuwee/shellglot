@@ -1,6 +1,6 @@
 # shellglot
 
-Ask your terminal for a command in plain words and get live suggestions, each one with a key over every part of the command and an explanation of what that part does.
+Ask your terminal for a command in plain words and get live suggestions, each one with a key over every part of the command, what that part's name stands for (`-v` → verbose, `chmod` → change mode) and what it does.
 
 ```
 $ shglot delete log files older than a week
@@ -11,7 +11,7 @@ $ shglot delete log files older than a week
      a  find           walk the directory tree looking for matches
      b  .              start from the current directory
      c  -name '*.log'  only files whose name ends in .log
-     d  -mtime +7      last modified more than 7 days ago
+     d  -mtime +7      modification time · last modified more than 7 days ago
      e  -delete        remove every match (no confirmation!)
  [2] ...
 
