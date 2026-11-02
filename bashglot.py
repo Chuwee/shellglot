@@ -39,7 +39,7 @@ SYSTEM_PROMPT = """You are bashglot, a shell expert that suggests commands for a
 Reply with ONLY newline-delimited JSON: exactly {n} lines, one JSON object per line, best suggestion first. No prose, no code fences, no blank lines.
 
 Each object has this shape:
-{{"command": "<the full command>", "summary": "<what it does, max 70 chars>", "danger": <true|false>, "parts": [{{"text": "<piece of the command>", "explain": "<what this piece does here, max 80 chars>"}}]}}
+{{"command": "<the full command>", "summary": "<what it does, max 70 chars>", "danger": <true|false>, "requires": [{{"program": "<executable name>", "install": "<command that installs it on the user's OS>"}}], "parts": [{{"text": "<piece of the command>", "explain": "<what this piece does here, max 80 chars>"}}]}}
 
 Rules for "parts":
 - Split the command into meaningful pieces, in left-to-right order, covering the whole command.
@@ -48,7 +48,12 @@ Rules for "parts":
 - Pipes, redirects and operators are their own pieces ("|", "&&", "2>/dev/null", "> out.txt").
 - Explanations are specific to this usage, not generic man-page text.
 
-The first suggestion is the simplest, most common command a seasoned user would type (often a single short command with few or no flags; e.g. "order the files by name" -> "ls"). Do not over-engineer: no pipelines or extra flags the task doesn't ask for. The other suggestions are genuinely different useful variants (another tool, or a common refinement). Prefer tools available on the user's OS, and set "danger" to true when the command deletes or overwrites data, changes system state, or needs sudo."""
+Rules for "requires":
+- List every program the command runs that is an external dependency: not part of a default install of the user's OS (e.g. fd, rg, jq, tree, htop, ffmpeg, pandoc on most Linux distros; brew-only tools on macOS). Shell builtins, coreutils, find, grep, sed, awk, tar, gzip, ps, etc. are standard and are not listed.
+- "program" is the executable name exactly as it appears in the command; "install" uses the user's package manager and the right package name (e.g. "sudo apt install fd-find").
+- Use [] when the command only uses standard tools.
+
+The first suggestion is the simplest, most common command a seasoned user would type (often a single short command with few or no flags; e.g. "order the files by name" -> "ls"). Do not over-engineer: no pipelines or extra flags the task doesn't ask for. The other suggestions are genuinely different useful variants (another tool, or a common refinement). Prefer tools available on the user's OS (standard tools come first unless the task needs something else), and set "danger" to true when the command deletes or overwrites data, changes system state, or needs sudo."""
 
 
 class BashglotError(Exception):
@@ -241,17 +246,18 @@ DEMO_SUGGESTIONS = [
 		{'text': '.', 'explain': 'start from the current directory'},
 		{'text': "-name '*.log'", 'explain': 'only files whose name ends in .log'},
 		{'text': '-mtime +7', 'explain': 'last modified more than 7 days ago'},
-		{'text': '-delete', 'explain': 'remove every match (no confirmation!)'}]},
+		{'text': '-delete', 'explain': 'remove every match (no confirmation!)'}], 'requires': []},
 	{'command': "find . -name '*.log' -mtime +7 -print", 'summary': 'Preview which .log files would be deleted', 'danger': False, 'parts': [
 		{'text': 'find .', 'explain': 'search from the current directory down'},
 		{'text': "-name '*.log'", 'explain': 'match names ending in .log'},
 		{'text': '-mtime +7', 'explain': 'older than 7 days'},
-		{'text': '-print', 'explain': 'list the matches instead of deleting them'}]},
-	{'command': "fd -e log --changed-before 7d -x rm", 'summary': 'Same with fd, if installed', 'danger': True, 'parts': [
+		{'text': '-print', 'explain': 'list the matches instead of deleting them'}], 'requires': []},
+	{'command': "fd -e log --changed-before 7d -x rm", 'summary': 'Same with fd', 'danger': True, 'parts': [
 		{'text': 'fd', 'explain': 'fast, friendly alternative to find'},
 		{'text': '-e log', 'explain': 'files with the .log extension'},
 		{'text': '--changed-before 7d', 'explain': 'modified more than 7 days ago'},
-		{'text': '-x rm', 'explain': 'run rm on each result'}]},
+		{'text': '-x rm', 'explain': 'run rm on each result'}],
+		'requires': [{'program': 'fd', 'install': 'sudo apt install fd-find'}]},
 ]
 
 
@@ -339,7 +345,28 @@ def parse_line(line):
 		return None
 	if not isinstance(suggestion, dict) or not isinstance(suggestion.get('command'), str) or not suggestion['command'].strip():
 		return None
+	suggestion['requires'] = parse_requires(suggestion.get('requires'))
 	return suggestion
+
+
+def parse_requires(requires):
+	"""Normalize the model's list of external dependencies to [{'program', 'install', 'installed'}]."""
+	result = []
+	for item in requires if isinstance(requires, list) else []:
+		if isinstance(item, str):
+			item = {'program': item}
+		if not isinstance(item, dict) or not isinstance(item.get('program'), str) or not item['program'].strip():
+			continue
+		program = item['program'].strip()
+		if any(r['program'] == program for r in result):
+			continue
+		install = item.get('install')
+		result.append({
+			'program': program,
+			'install': install.strip() if isinstance(install, str) else '',
+			'installed': shutil.which(program) is not None,
+		})
+	return result
 
 
 # ---------------------------------------------------------------- rendering
@@ -386,6 +413,15 @@ def render(number, suggestion, columns):
 	header = f' {c("1;97", f"[{number}]")} {c("1", suggestion.get("summary", ""))}'
 	if suggestion.get('danger'):
 		header += '  ' + c('1;31', '⚠ destructive')
+	requires = suggestion.get('requires') or []
+	if requires:
+		missing = [r for r in requires if not r['installed']]
+		names = ', '.join(r['program'] for r in requires)
+		if missing:
+			header += '  ' + c('1;33', f'⬡ needs {names} (not installed)' if len(missing) == len(requires)
+				else f'⬡ needs {names} ({", ".join(r["program"] for r in missing)} not installed)')
+		else:
+			header += '  ' + c('2', f'⬡ needs {names} (installed)')
 	lines.append(header)
 
 	owners = [None] * len(command)
@@ -423,6 +459,11 @@ def render(number, suggestion, columns):
 		color = PART_COLORS[i % len(PART_COLORS)]
 		key = chr(ord('a') + i) if spans[i] else '·'
 		lines.append(f'{INDENT}{c("1;" + color, key)}  {c(color, shown.ljust(width))}  {c("2", str(part.get("explain", "")))}')
+
+	for r in requires:
+		if not r['installed']:
+			how = f'install with: {c("1", r["install"])}' if r['install'] else 'install it first'
+			lines.append(f'{INDENT}{c("33", "⬡")}  {c("33", r["program"])} is an external dependency and is not installed; {how}')
 	return '\n'.join(lines)
 
 

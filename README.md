@@ -18,6 +18,8 @@ Ask your terminal for a command in plain words and get live suggestions, each on
  press 1-3 to edit and run · Enter for 1 · any other key to cancel
 ```
 
+When a suggestion uses an external dependency (a program that isn't part of a standard install of your OS, like `fd`, `rg` or `jq`), its header says so with `⬡ needs fd`. bashglot checks your `PATH`: if the program is missing, the header marks it as not installed and a line under the suggestion gives the command to install it.
+
 Suggestions appear one by one as the model streams them. Pick one with its number: bash puts it on an editable line (Enter runs it, Ctrl-C cancels), and zsh puts it in your next prompt.
 
 ## Install
