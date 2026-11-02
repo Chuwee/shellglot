@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""bashglot: quick shell command suggestions from an LLM, with every part of the command explained."""
+"""shellglot: quick shell command suggestions from an LLM, with every part of the command explained."""
 
 import argparse
 import getpass
@@ -16,8 +16,9 @@ import time
 import urllib.error
 import urllib.request
 
-CONFIG_DIR = os.path.join(os.environ.get('XDG_CONFIG_HOME') or os.path.expanduser('~/.config'), 'bashglot')
+CONFIG_DIR = os.path.join(os.environ.get('XDG_CONFIG_HOME') or os.path.expanduser('~/.config'), 'shellglot')
 CONFIG_PATH = os.path.join(CONFIG_DIR, 'config.json')
+OLD_CONFIG_DIR = os.path.join(os.path.dirname(CONFIG_DIR), 'bashglot')  # before the rename to shellglot
 
 DEFAULTS = {
 	'provider': 'codex',          # codex (your local Codex CLI login) | anthropic | openai (any OpenAI-compatible server: OpenAI, Ollama, LM Studio, OpenRouter...) | demo
@@ -34,7 +35,7 @@ FALLBACK_MODELS = {'claude-fable-5-1', 'claude-opus-5-5', 'claude-opus-5', 'clau
 
 OPENAI_DEFAULT_BASE_URL = 'http://localhost:11434/v1'  # Ollama
 
-SYSTEM_PROMPT = """You are bashglot, a shell expert that suggests commands for a terminal user.
+SYSTEM_PROMPT = """You are shellglot, a shell expert that suggests commands for a terminal user.
 
 Reply with ONLY newline-delimited JSON: exactly {n} lines, one JSON object per line, best suggestion first. No prose, no code fences, no blank lines.
 
@@ -56,11 +57,17 @@ Rules for "requires":
 The first suggestion is the simplest, most common command a seasoned user would type (often a single short command with few or no flags; e.g. "order the files by name" -> "ls"). Do not over-engineer: no pipelines or extra flags the task doesn't ask for. The other suggestions are genuinely different useful variants (another tool, or a common refinement). Prefer tools available on the user's OS (standard tools come first unless the task needs something else), and set "danger" to true when the command deletes or overwrites data, changes system state, or needs sudo."""
 
 
-class BashglotError(Exception):
+class ShellglotError(Exception):
 	pass
 
 
 # ---------------------------------------------------------------- config
+
+def migrate_config():
+	"""Move settings saved under the old bashglot name to the shellglot config directory."""
+	if not os.path.exists(CONFIG_DIR) and os.path.isdir(OLD_CONFIG_DIR):
+		os.rename(OLD_CONFIG_DIR, CONFIG_DIR)
+
 
 def load_config():
 	config = dict(DEFAULTS)
@@ -70,7 +77,7 @@ def load_config():
 	except FileNotFoundError:
 		pass
 	except json.JSONDecodeError as e:
-		raise BashglotError(f'{CONFIG_PATH} is not valid JSON: {e}')
+		raise ShellglotError(f'{CONFIG_PATH} is not valid JSON: {e}')
 	return config
 
 
@@ -106,10 +113,10 @@ def configure(provider_default=None):
 	if provider_default and provider_default != config['provider']:
 		config['provider'] = provider_default
 		config['model'] = DEFAULT_MODELS[provider_default]
-	print(c('1', 'bashglot setup') + c('2', f'  (saved to {CONFIG_PATH}, Enter keeps the current value)'))
+	print(c('1', 'shellglot setup') + c('2', f'  (saved to {CONFIG_PATH}, Enter keeps the current value)'))
 	provider = ask('Provider: codex (local Codex CLI login), anthropic, openai (any OpenAI-compatible server, e.g. Ollama), demo', config['provider'])
 	if provider not in PROVIDERS:
-		raise BashglotError(f'unknown provider "{provider}"')
+		raise ShellglotError(f'unknown provider "{provider}"')
 	if provider != config['provider']:
 		config['model'] = DEFAULT_MODELS[provider]
 		config['base_url'] = ''
@@ -155,7 +162,7 @@ def build_context():
 	listing = ', '.join(e + ('/' if os.path.isdir(os.path.join(cwd, e)) else '') for e in entries[:40])
 	if len(entries) > 40:
 		listing += f', ... ({len(entries) - 40} more)'
-	shell = os.environ.get('BASHGLOT_SHELL') or os.path.basename(os.environ.get('SHELL', 'sh'))
+	shell = os.environ.get('SHELLGLOT_SHELL') or os.path.basename(os.environ.get('SHELL', 'sh'))
 	return f'OS: {os_name()}\nShell: {shell}\nWorking directory: {cwd}\nFiles here: {listing or "(empty)"}'
 
 
@@ -165,7 +172,7 @@ def stream_anthropic(config, system, user):
 	try:
 		import anthropic
 	except ImportError:
-		raise BashglotError('the anthropic package is missing; run ./install.sh or `pip install anthropic`')
+		raise ShellglotError('the anthropic package is missing; run ./install.sh or `pip install anthropic`')
 	client_options = {}
 	if config['api_key']:
 		client_options['api_key'] = config['api_key']
@@ -192,17 +199,17 @@ def stream_anthropic(config, system, user):
 			yield from stream.text_stream
 			final = stream.get_final_message()
 	except anthropic.AuthenticationError:
-		raise BashglotError('authentication failed: set ANTHROPIC_API_KEY or run `bashglot config`')
+		raise ShellglotError('authentication failed: set ANTHROPIC_API_KEY or run `shellglot config`')
 	except anthropic.NotFoundError:
-		raise BashglotError(f'model "{config["model"]}" not found; run `bashglot config`')
+		raise ShellglotError(f'model "{config["model"]}" not found; run `shellglot config`')
 	except anthropic.RateLimitError:
-		raise BashglotError('rate limited; try again in a moment')
+		raise ShellglotError('rate limited; try again in a moment')
 	except anthropic.APIStatusError as e:
-		raise BashglotError(f'API error {e.status_code}: {e.message}')
+		raise ShellglotError(f'API error {e.status_code}: {e.message}')
 	except anthropic.APIConnectionError:
-		raise BashglotError('could not reach the Anthropic API; check your connection')
+		raise ShellglotError('could not reach the Anthropic API; check your connection')
 	if final.stop_reason == 'refusal':
-		raise BashglotError('the model declined this request')
+		raise ShellglotError('the model declined this request')
 
 
 def stream_openai(config, system, user):
@@ -220,9 +227,9 @@ def stream_openai(config, system, user):
 	try:
 		response = urllib.request.urlopen(request, timeout=120)
 	except urllib.error.HTTPError as e:
-		raise BashglotError(f'API error {e.code}: {e.read().decode(errors="replace")[:300]}')
+		raise ShellglotError(f'API error {e.code}: {e.read().decode(errors="replace")[:300]}')
 	except urllib.error.URLError as e:
-		raise BashglotError(f'could not reach {base_url}: {e.reason}')
+		raise ShellglotError(f'could not reach {base_url}: {e.reason}')
 	with response:
 		for raw in response:
 			line = raw.decode(errors='replace').strip()
@@ -276,11 +283,11 @@ def stream_codex(config, system, user):
 	"""
 	codex = shutil.which('codex')
 	if not codex:
-		raise BashglotError('the codex CLI is not on PATH; install it or pick another provider with `bashglot config`')
+		raise ShellglotError('the codex CLI is not on PATH; install it or pick another provider with `shellglot config`')
 	command = [
 		codex, 'exec', '--json', '--ephemeral', '--skip-git-repo-check',
 		'--ignore-user-config', '--ignore-rules', '--sandbox', 'read-only',
-		# Run from an empty directory so Codex doesn't load AGENTS.md or repo context; bashglot sends its own.
+		# Run from an empty directory so Codex doesn't load AGENTS.md or repo context; shellglot sends its own.
 		'--cd', tempfile.gettempdir(),
 		'--model', config['model'],
 	]
@@ -306,11 +313,11 @@ def stream_codex(config, system, user):
 				error = event.get('message') or (event.get('error') or {}).get('message') or 'codex failed'
 		process.wait()
 		if error:
-			raise BashglotError(f'codex: {error}')
+			raise ShellglotError(f'codex: {error}')
 		if process.returncode:
 			stderr.seek(0)
 			tail = stderr.read().strip().splitlines()
-			raise BashglotError(f'codex: {tail[-1] if tail else f"exited with code {process.returncode}"}')
+			raise ShellglotError(f'codex: {tail[-1] if tail else f"exited with code {process.returncode}"}')
 	finally:
 		if process.poll() is None:
 			process.kill()
@@ -518,15 +525,15 @@ def read_key():
 
 
 def first_run_setup():
-	"""Offer to pick an LLM provider the first time bashglot runs; save either way so we only ask once."""
+	"""Offer to pick an LLM provider the first time shellglot runs; save either way so we only ask once."""
 	detected = detect_provider()
-	print(c('1', 'Welcome to bashglot!') + ' No LLM provider is configured yet.')
+	print(c('1', 'Welcome to shellglot!') + ' No LLM provider is configured yet.')
 	if input('  Set one up now? [Y/n]: ').strip().lower().startswith('n'):
 		config = load_config()
 		config['provider'] = detected
 		config['model'] = DEFAULT_MODELS[detected]
 		save_config(config)
-		print(c('2', f'  using {detected} / {config["model"]}; change it any time with `bashglot config`'))
+		print(c('2', f'  using {detected} / {config["model"]}; change it any time with `shellglot config`'))
 	else:
 		configure(detected)
 	print()
@@ -538,7 +545,7 @@ def suggest(prompt, out_path):
 	config = load_config()
 	provider = PROVIDERS.get(config['provider'])
 	if not provider:
-		raise BashglotError(f'unknown provider "{config["provider"]}"; run `bashglot config`')
+		raise ShellglotError(f'unknown provider "{config["provider"]}"; run `shellglot config`')
 	count = max(1, min(int(config['suggestions']), 9))
 	user = f'Task: {prompt}'
 	if config['send_context']:
@@ -553,7 +560,7 @@ def suggest(prompt, out_path):
 			suggestions.append(suggestion)
 			spinner.print(('' if len(suggestions) == 1 else '\n') + render(len(suggestions), suggestion, columns))
 	if not suggestions:
-		raise BashglotError('the model returned no usable suggestions; try rephrasing')
+		raise ShellglotError('the model returned no usable suggestions; try rephrasing')
 
 	if not (out_path and sys.stdin.isatty()):
 		return
@@ -572,7 +579,7 @@ def suggest(prompt, out_path):
 
 
 def main():
-	parser = argparse.ArgumentParser(prog='bashglot', description=__doc__)
+	parser = argparse.ArgumentParser(prog='shellglot', description=__doc__)
 	sub = parser.add_subparsers(dest='action', required=True)
 	suggest_parser = sub.add_parser('suggest', help='suggest commands for a prompt')
 	suggest_parser.add_argument('--out', help='file to write the chosen command to')
@@ -580,12 +587,13 @@ def main():
 	sub.add_parser('config', help='set the provider, model and key')
 	args = parser.parse_args()
 	try:
+		migrate_config()
 		if args.action == 'config':
 			configure()
 		else:
 			suggest(' '.join(args.prompt), args.out)
-	except BashglotError as e:
-		sys.stderr.write(f'\r\x1b[K {c("1;31", "bashglot:")} {e}\n')
+	except ShellglotError as e:
+		sys.stderr.write(f'\r\x1b[K {c("1;31", "shellglot:")} {e}\n')
 		sys.exit(1)
 	except KeyboardInterrupt:
 		sys.stderr.write('\r\x1b[K')

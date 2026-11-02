@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install bashglot: a private virtualenv with the Anthropic SDK, plus the shell hook in your rc file.
+# Install shellglot: a private virtualenv with the Anthropic SDK, plus the shell hook in your rc file.
 # Usage: ./install.sh [--no-rc]
 set -euo pipefail
 
@@ -20,14 +20,14 @@ if [ "${1:-}" != '--no-rc' ]; then
 		zsh) rc="$HOME/.zshrc" ;;
 		*) rc="$HOME/.bashrc" ;;
 	esac
-	if ! grep -q 'bashglot.sh' "$rc" 2>/dev/null; then
-		printf '\n# bashglot\nexport BASHGLOT_HOME=%q\nsource "$BASHGLOT_HOME/bashglot.sh"\n' "$here" >>"$rc"
+	if ! grep -q 'shellglot.sh' "$rc" 2>/dev/null; then
+		printf '\n# shellglot\nexport SHELLGLOT_HOME=%q\nsource "$SHELLGLOT_HOME/shellglot.sh"\n' "$here" >>"$rc"
 		echo "› added the shell hook to $rc"
 	fi
 fi
 
 echo
 echo 'done. open a new terminal (or source your rc file), then:'
-echo '  bashglot config     # optional: pick provider/model (it also asks on first use)'
-echo '  bashglot on'
-echo '  bglot find files bigger than 100MB'
+echo '  shellglot config     # optional: pick provider/model (it also asks on first use)'
+echo '  shellglot on'
+echo '  sglot find files bigger than 100MB'
