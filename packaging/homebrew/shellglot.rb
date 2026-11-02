@@ -21,7 +21,8 @@ class Shellglot < Formula
 
   def caveats
     <<~EOS
-      To turn shellglot on, add this to ~/.zshrc (or ~/.bashrc, with "bash"):
+      Run `shellglot <what you want to do>`; the command you pick is copied to the clipboard.
+      To get picks straight onto your prompt instead, add this to ~/.zshrc (or ~/.bashrc, with "bash"):
         eval "$(shellglot init zsh)"
     EOS
   end

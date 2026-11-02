@@ -31,8 +31,9 @@ Description: shell command suggestions from plain words, with every part explain
  each with a letter over every part of the command and a line explaining it.
  Works with the Codex CLI, the Anthropic API or any OpenAI-compatible server.
  .
- Enable it by adding  eval "\$(shellglot init bash)"  to ~/.bashrc
- (or  eval "\$(shellglot init zsh)"  to ~/.zshrc).
+ Run  shellglot <what you want to do> ; the command you pick is copied to
+ the clipboard. Optionally, add  eval "\$(shellglot init bash)"  to ~/.bashrc
+ (or the zsh version to ~/.zshrc) to get picks straight onto your prompt.
 CONTROL
 
 mkdir -p "$root/dist"

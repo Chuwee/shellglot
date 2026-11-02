@@ -3,7 +3,7 @@
 Ask your terminal for a command in plain words and get live suggestions, each one with a key over every part of the command and an explanation of what that part does.
 
 ```
-(sglot) $ sglot delete log files older than a week
+$ shellglot delete log files older than a week
  [1] Delete .log files older than 7 days  ⚠ destructive
       a   b       c           d        e
      ╭┴─╮ ┴ ╭─────┴─────╮ ╭───┴───╮ ╭──┴──╮
@@ -15,12 +15,14 @@ Ask your terminal for a command in plain words and get live suggestions, each on
      e  -delete        remove every match (no confirmation!)
  [2] ...
 
- press 1-3 to edit and run · Enter for 1 · any other key to cancel
+ press 1-3 to copy · Enter for 1 · any other key to cancel
 ```
 
 When a suggestion uses an external dependency (a program that isn't part of a standard install of your OS, like `fd`, `rg` or `jq`), its header says so with `⬡ needs fd`. shellglot checks your `PATH`: if the program is missing, the header marks it as not installed and a line under the suggestion gives the command to install it.
 
-Suggestions appear one by one as the model streams them. Pick one with its number: bash puts it on an editable line (Enter runs it, Ctrl-C cancels), and zsh puts it in your next prompt.
+Suggestions appear one by one as the model streams them. Pick one with its number and it's copied to your clipboard: paste it at your prompt, change it if you like, and press Enter. With the optional [shell hook](#shell-hook), the pick goes straight onto your prompt instead.
+
+Copying uses your OS's clipboard tool: `pbcopy` on macOS, `wl-copy` on Wayland, `xclip` or `xsel` on X11, `clip.exe` on WSL and `termux-clipboard-set` on Termux. Without one, and always over SSH (where those tools would fill the remote machine's clipboard), shellglot asks your terminal to copy with OSC 52, which most modern terminals and tmux support.
 
 ## Install
 
@@ -38,19 +40,23 @@ echo 'deb [signed-by=/usr/share/keyrings/shellglot.gpg] https://chuwee.github.io
 sudo apt update && sudo apt install shellglot
 ```
 
-Both packages install the `shellglot` program but leave your shell config alone. To turn it on, add this line to `~/.bashrc` (or `~/.zshrc`, with `zsh`):
-
-```sh
-eval "$(shellglot init bash)"
-```
+That's all you need: run `shellglot <what you want to do>`.
 
 The `anthropic` provider needs the Anthropic Python SDK. The Homebrew package includes it; apt installs `python3-anthropic` when your distribution has it (Ubuntu 26.04 and later), and otherwise you can pick another provider.
 
 **From a checkout:**
 
 ```sh
-./install.sh            # creates .venv with the Anthropic SDK and adds the hook to ~/.bashrc or ~/.zshrc
+./install.sh            # creates .venv with the Anthropic SDK and adds the shell hook to ~/.bashrc or ~/.zshrc
 ./install.sh --no-rc    # same, without touching your rc file
+```
+
+### Shell hook
+
+The hook is optional. With it, a picked command lands on an editable line (bash) or in your next prompt (zsh) instead of the clipboard, it goes into your history, and you get `sglot` mode. Add this line to `~/.bashrc` (or `~/.zshrc`, with `zsh`); `install.sh` adds its own equivalent:
+
+```sh
+eval "$(shellglot init bash)"
 ```
 
 Then open a new terminal. The first time you ask for a suggestion, shellglot offers to set up an LLM provider, already filled in with what it finds on your machine: the Codex CLI, an `ANTHROPIC_API_KEY`, or a local Ollama. Run `shellglot config` to change it later.
@@ -61,13 +67,13 @@ With the `codex` provider, suggestions arrive all at once after a few seconds, b
 
 | Command | What it does |
 |---|---|
-| `shellglot on` | enter shellglot mode; the prompt shows `(sglot)` |
+| `shellglot <prompt>` | suggest commands; the one you pick is copied (or put on your prompt, with the hook) |
+| `shellglot config` | choose provider, model, API key, number of suggestions |
+| `shellglot on` | enter shellglot mode, where the prompt shows `(sglot)` (needs the hook) |
 | `sglot <prompt>` | suggest commands (in shellglot mode) |
 | `shellglot off` | leave shellglot mode |
-| `shellglot <prompt>` | one-off suggestion without entering the mode |
-| `shellglot config` | choose provider, model, API key, number of suggestions |
 
-Globs in the prompt are not expanded (`sglot remove *.tmp files` works), but quotes still need to be balanced, so write `whats` or quote the whole prompt.
+In shellglot mode, globs in the prompt are not expanded (`sglot remove *.tmp files` works), but quotes still need to be balanced, so write `whats` or quote the whole prompt.
 
 Set `SHELLGLOT_AUTO_ON=1` before sourcing `shellglot.sh` to start every shell in shellglot mode.
 

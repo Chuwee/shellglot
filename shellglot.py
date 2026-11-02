@@ -2,6 +2,7 @@
 """shellglot: quick shell command suggestions from an LLM, with every part of the command explained."""
 
 import argparse
+import base64
 import getpass
 import itertools
 import json
@@ -565,20 +566,84 @@ def suggest(prompt, out_path):
 	if not suggestions:
 		raise ShellglotError('the model returned no usable suggestions; try rephrasing')
 
-	if not (out_path and sys.stdin.isatty()):
+	if not sys.stdin.isatty():
 		return
+	# With the shell hook (out_path), the pick lands on an editable line; without it, on the clipboard.
 	choices = '1' if len(suggestions) == 1 else f'1-{len(suggestions)}'
-	sys.stderr.write(f'\n {c("2", f"press {choices} to edit and run · Enter for 1 · any other key to cancel")} ')
+	action = 'edit and run' if out_path else 'copy'
+	sys.stderr.write(f'\n {c("2", f"press {choices} to {action} · Enter for 1 · any other key to cancel")} ')
 	sys.stderr.flush()
 	key = read_key()
 	if key in ('\r', '\n'):
 		key = '1'
-	if key.isdigit() and 1 <= int(key) <= len(suggestions):
+	if not (key.isdigit() and 1 <= int(key) <= len(suggestions)):
+		sys.stderr.write(f'\r\x1b[K {c("2", "cancelled")}\n')
+		return
+	command = suggestions[int(key) - 1]['command']
+	if out_path:
 		sys.stderr.write(f'\r\x1b[K {c("2", f"using [{key}]")}\n')
 		with open(out_path, 'w') as f:
-			f.write(suggestions[int(key) - 1]['command'])
-	else:
-		sys.stderr.write(f'\r\x1b[K {c("2", "cancelled")}\n')
+			f.write(command)
+		return
+	copy(command)
+	paste = paste_keys()
+	shell = 'zsh' if os.path.basename(os.environ.get('SHELL', '')) == 'zsh' else 'bash'
+	sys.stderr.write(f'\r\x1b[K {c("32", f"copied [{key}]")} {c("2", f"paste it with {paste}, edit it if you like, then press Enter")}\n')
+	sys.stderr.write(f' {c("2", f"tip: add  eval \"$(shellglot init {shell})\"  to ~/.{shell}rc to get it on your prompt without pasting")}\n')
+
+
+def is_wsl():
+	try:
+		with open('/proc/version') as f:
+			return 'microsoft' in f.read().lower()
+	except OSError:
+		return False
+
+
+def clipboard_commands():
+	"""The clipboard tools that suit this OS and session, best first."""
+	if os.environ.get('SSH_CONNECTION') or os.environ.get('SSH_TTY'):
+		return []  # a tool here would fill the remote machine's clipboard; OSC 52 reaches the local terminal
+	system = platform.system()
+	if system == 'Darwin':
+		return [['pbcopy']]
+	if system.startswith(('CYGWIN', 'MSYS', 'MINGW')):
+		return [['clip.exe']]
+	if os.environ.get('TERMUX_VERSION'):
+		return [['termux-clipboard-set']]
+	if is_wsl():
+		return [['clip.exe']]
+	commands = []
+	if os.environ.get('WAYLAND_DISPLAY'):
+		commands.append(['wl-copy'])
+	if os.environ.get('DISPLAY'):  # X11, or XWayland on a Wayland desktop
+		commands += [['xclip', '-selection', 'clipboard'], ['xsel', '--clipboard', '--input']]
+	return commands
+
+
+def copy(text):
+	"""Copy to the clipboard with the OS's tool, falling back to asking the terminal (OSC 52)."""
+	for command in clipboard_commands():
+		if shutil.which(command[0]):
+			try:
+				subprocess.run(command, input=text, text=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True, timeout=5)
+				return
+			except (subprocess.SubprocessError, OSError):
+				continue
+	# Many terminals (iTerm2, kitty, WezTerm, Alacritty, Windows Terminal, foot...) and tmux accept OSC 52.
+	try:
+		with open('/dev/tty', 'w') as tty:
+			tty.write(f'\x1b]52;c;{base64.b64encode(text.encode()).decode()}\x07')
+	except OSError:
+		raise ShellglotError('could not copy: install a clipboard tool (wl-clipboard, xclip or xsel) or use a terminal that supports OSC 52')
+
+
+def paste_keys():
+	if platform.system() == 'Darwin':
+		return 'Cmd+V'
+	if is_wsl() or platform.system().startswith(('CYGWIN', 'MSYS', 'MINGW')):
+		return 'Ctrl+V'
+	return 'Ctrl+Shift+V'
 
 
 def hook_path():
@@ -605,7 +670,26 @@ def main():
 	sub.add_parser('config', help='set the provider, model and key')
 	init_parser = sub.add_parser('init', help='print the shell hook; add `eval "$(shellglot init bash)"` to your rc file')
 	init_parser.add_argument('shell', choices=['bash', 'zsh'])
-	args = parser.parse_args()
+	argv = sys.argv[1:]
+	if not argv:
+		parser.print_help()
+		return
+	if argv[0] in ('on', 'off', 'status') and len(argv) == 1:
+		shell = 'zsh' if os.path.basename(os.environ.get('SHELL', '')) == 'zsh' else 'bash'
+		sys.stderr.write(f'shellglot {argv[0]} needs the shell hook. Add this to ~/.{shell}rc and open a new terminal:\n'
+			f'  eval "$(shellglot init {shell})"\n')
+		sys.exit(2)
+	# `shellglot <prompt>` is a suggestion; only an exact subcommand form is treated as one.
+	is_subcommand = (
+		argv[0] in ('suggest', '-h', '--help', '--version')
+		or (argv[0] in ('config', 'setup') and len(argv) == 1)
+		or (argv[0] == 'init' and len(argv) == 2 and argv[1] in ('bash', 'zsh'))
+	)
+	if argv[0] == 'setup' and len(argv) == 1:
+		argv = ['config']
+	if not is_subcommand:
+		argv = ['suggest', '--', *argv]
+	args = parser.parse_args(argv)
 	try:
 		migrate_config()
 		if args.action == 'config':
