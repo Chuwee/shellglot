@@ -3,7 +3,7 @@
 Ask your terminal for a command in plain words and get live suggestions, each one with a key over every part of the command and an explanation of what that part does.
 
 ```
-$ shellglot delete log files older than a week
+$ shglot delete log files older than a week
  [1] Delete .log files older than 7 days  ⚠ destructive
       a   b       c           d        e
      ╭┴─╮ ┴ ╭─────┴─────╮ ╭───┴───╮ ╭──┴──╮
@@ -40,12 +40,12 @@ echo 'deb [signed-by=/usr/share/keyrings/shellglot.gpg] https://chuwee.github.io
 sudo apt update && sudo apt install shellglot
 ```
 
-That's all you need: run `shellglot <what you want to do>`.
+That's all you need: the command is `shglot`, so run `shglot <what you want to do>`.
 
 **From a checkout:**
 
 ```sh
-./install.sh        # links shellglot into ~/.local/bin
+./install.sh        # links the shglot command into ~/.local/bin
 ./install.sh --rc   # same, and adds the optional shell hook to ~/.bashrc or ~/.zshrc
 ```
 
@@ -54,10 +54,10 @@ That's all you need: run `shellglot <what you want to do>`.
 The hook is optional. With it, a picked command lands on an editable line (bash) or in your next prompt (zsh) instead of the clipboard, it goes into your history, and you get `sglot` mode. Add this line to `~/.bashrc` (or `~/.zshrc`, with `zsh`), or run `./install.sh --rc`:
 
 ```sh
-eval "$(shellglot init bash)"
+eval "$(shglot init bash)"
 ```
 
-Then open a new terminal. The first time you ask for a suggestion, shellglot offers to set up an LLM provider, already filled in with what it finds on your machine: Claude Code, the Codex CLI, an `ANTHROPIC_API_KEY`, or a local Ollama. Run `shellglot config` to change it later.
+Then open a new terminal. The first time you ask for a suggestion, shellglot offers to set up an LLM provider, already filled in with what it finds on your machine: Claude Code, the Codex CLI, an `ANTHROPIC_API_KEY`, or a local Ollama. Run `shglot config` to change it later.
 
 shellglot needs nothing but Python 3.8 or later: it talks to APIs with the standard library, and to Claude Code and Codex through their own CLIs.
 
@@ -67,11 +67,11 @@ With the `codex` provider, suggestions arrive all at once after a few seconds, b
 
 | Command | What it does |
 |---|---|
-| `shellglot <prompt>` | suggest commands; the one you pick is copied (or put on your prompt, with the hook) |
-| `shellglot config` | choose provider, model, API key, number of suggestions |
-| `shellglot on` | enter shellglot mode, where the prompt shows `(sglot)` (needs the hook) |
+| `shglot <prompt>` | suggest commands; the one you pick is copied (or put on your prompt, with the hook) |
+| `shglot config` | choose provider, model, API key, number of suggestions |
+| `shglot on` | enter shellglot mode, where the prompt shows `(sglot)` (needs the hook) |
 | `sglot <prompt>` | suggest commands (in shellglot mode) |
-| `shellglot off` | leave shellglot mode |
+| `shglot off` | leave shellglot mode |
 
 In shellglot mode, globs in the prompt are not expanded (`sglot remove *.tmp files` works), but quotes still need to be balanced, so write `whats` or quote the whole prompt.
 
@@ -93,7 +93,7 @@ Settings live in `~/.config/shellglot/config.json` (mode 600):
 
 ## Privacy and safety
 
-With `send_context` on, the model provider sees the current directory path and the names of the files in it. Turn it off in `shellglot config` if that matters.
+With `send_context` on, the model provider sees the current directory path and the names of the files in it. Turn it off in `shglot config` if that matters.
 
 Treat suggestions as untrusted text from the model, and read a command before you run it:
 

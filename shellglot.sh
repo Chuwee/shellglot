@@ -1,6 +1,6 @@
 # shellglot shell integration for bash and zsh.
 # Load it from ~/.bashrc or ~/.zshrc. Installed with apt or brew:
-#   eval "$(shellglot init bash)"     # or zsh
+#   eval "$(shglot init bash)"     # or zsh
 # From a checkout (install.sh does this for you):
 #   export SHELLGLOT_HOME=/path/to/shellglot
 #   source "$SHELLGLOT_HOME/shellglot.sh"
@@ -66,7 +66,7 @@ _shellglot_on() {
 	else
 		alias sglot='set -f; _shellglot_sglot'
 	fi
-	echo "shellglot mode on: type $(printf '\e[1m')sglot <what you want to do>$(printf '\e[0m')  ·  shellglot off to leave"
+	echo "shellglot mode on: type $(printf '\e[1m')sglot <what you want to do>$(printf '\e[0m')  ·  shglot off to leave"
 }
 
 _shellglot_off() {
@@ -78,14 +78,14 @@ _shellglot_off() {
 	echo 'shellglot mode off'
 }
 
-shellglot() {
+shglot() {
 	case "$1" in
 		on) _shellglot_on ;;
 		off) _shellglot_off ;;
 		config | setup) _shellglot_py config ;;
 		--version) _shellglot_py --version ;;
 		init)
-			# `shellglot init bash` prints the hook; `shellglot init a git repo` is a prompt.
+			# `shglot init bash` prints the hook; `shglot init a git repo` is a prompt.
 			if [ $# -eq 2 ] && { [ "$2" = bash ] || [ "$2" = zsh ]; }; then
 				_shellglot_py "$@"
 			else
@@ -95,10 +95,10 @@ shellglot() {
 		status) [ -n "$SHELLGLOT_MODE" ] && echo 'shellglot mode: on' || echo 'shellglot mode: off' ;;
 		'' | -h | --help | help)
 			cat <<-'EOF'
-				usage: shellglot on            enter shellglot mode (then: sglot <prompt>)
-				       shellglot off           leave shellglot mode
-				       shellglot config        choose provider, model and API key
-				       shellglot <prompt>      one-off suggestion without entering the mode
+				usage: shglot on            enter shellglot mode (then: sglot <prompt>)
+				       shglot off           leave shellglot mode
+				       shglot config        choose provider, model and API key
+				       shglot <prompt>      one-off suggestion without entering the mode
 			EOF
 			;;
 		*) _shellglot_suggest "$@" ;;
