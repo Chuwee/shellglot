@@ -42,12 +42,10 @@ sudo apt update && sudo apt install shellglot
 
 That's all you need: run `shellglot <what you want to do>`.
 
-The `anthropic` provider needs the Anthropic Python SDK. The Homebrew package includes it; apt installs `python3-anthropic` when your distribution has it (Ubuntu 26.04 and later), and otherwise you can pick another provider.
-
 **From a checkout:**
 
 ```sh
-./install.sh        # creates .venv with a pinned Anthropic SDK and links shellglot into ~/.local/bin
+./install.sh        # links shellglot into ~/.local/bin
 ./install.sh --rc   # same, and adds the optional shell hook to ~/.bashrc or ~/.zshrc
 ```
 
@@ -59,9 +57,11 @@ The hook is optional. With it, a picked command lands on an editable line (bash)
 eval "$(shellglot init bash)"
 ```
 
-Then open a new terminal. The first time you ask for a suggestion, shellglot offers to set up an LLM provider, already filled in with what it finds on your machine: the Codex CLI, an `ANTHROPIC_API_KEY`, or a local Ollama. Run `shellglot config` to change it later.
+Then open a new terminal. The first time you ask for a suggestion, shellglot offers to set up an LLM provider, already filled in with what it finds on your machine: Claude Code, the Codex CLI, an `ANTHROPIC_API_KEY`, or a local Ollama. Run `shellglot config` to change it later.
 
-With the `codex` provider, suggestions arrive all at once after a few seconds, because Codex only reports a message when it's complete. The `anthropic` and `openai` providers stream them in one by one.
+shellglot needs nothing but Python 3.8 or later: it talks to APIs with the standard library, and to Claude Code and Codex through their own CLIs.
+
+With the `codex` provider, suggestions arrive all at once after a few seconds, because Codex only reports a message when it's complete. The other providers stream them in one by one.
 
 ## Use
 
@@ -83,9 +83,9 @@ Settings live in `~/.config/shellglot/config.json` (mode 600):
 
 | Key | Default | Notes |
 |---|---|---|
-| `provider` | `codex` | `codex` (runs your local Codex CLI, so it uses your ChatGPT subscription; no API key), `anthropic`, `openai` (any OpenAI-compatible server: OpenAI, Ollama, LM Studio, OpenRouter) or `demo` (canned output, no network) |
-| `model` | `gpt-5.6-luna` | e.g. `claude-opus-5-5` or `claude-haiku-5-5` on Anthropic, `llama3.2` on Ollama |
-| `effort` | `low` | codex and anthropic; `""` to omit |
+| `provider` | `codex` | `claude` (runs your local Claude Code, so it uses your Claude subscription; no API key), `codex` (runs your local Codex CLI, so it uses your ChatGPT subscription; no API key), `anthropic` (the Anthropic API with an API key), `openai` (any OpenAI-compatible server: OpenAI, Ollama, LM Studio, OpenRouter) or `demo` (canned output, no network). First-run setup picks the first one it finds, in that order |
+| `model` | `gpt-5.6-luna` | e.g. `claude-opus-5-5` or `claude-haiku-5-5` with `claude` or `anthropic`, `llama3.2` on Ollama |
+| `effort` | `low` | claude, codex and anthropic; `""` to omit |
 | `api_key` | `""` | empty uses `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` |
 | `base_url` | `""` | empty uses the provider default (`http://localhost:11434/v1` for `openai`) |
 | `suggestions` | `3` | 1–9 |
@@ -100,6 +100,7 @@ Treat suggestions as untrusted text from the model, and read a command before yo
 - No command runs without you choosing it and pressing Enter.
 - **⚠ destructive** comes from the model *or* from shellglot's own check of the command (`rm`, `sudo`, `> file`, `find -delete`, `git reset --hard`, piping into a shell, package installs and more). The check can only add the label, never remove it, but it is a heuristic: no label doesn't mean safe.
 - Anything the model writes is cleaned before it reaches your terminal: escape sequences and other control or invisible characters are shown as `�`. A suggested command containing any of them (including a newline or a bidi override) is dropped, so it can never be copied or put on your prompt.
+- With the `claude` provider, Claude Code runs in a fresh empty directory with no tools at all, without your settings, MCP servers or saved sessions, and shellglot stops it if it starts any tool call anyway.
 - With the `codex` provider, Codex runs in a read-only sandbox in a fresh empty directory, with its shell, code, browser, app and web search tools switched off, and shellglot stops it if it starts any tool call anyway.
 
 ## Releasing

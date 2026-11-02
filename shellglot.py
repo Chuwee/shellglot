@@ -26,9 +26,9 @@ CONFIG_PATH = os.path.join(CONFIG_DIR, 'config.json')
 OLD_CONFIG_DIR = os.path.join(os.path.dirname(CONFIG_DIR), 'bashglot')  # before the rename to shellglot
 
 DEFAULTS = {
-	'provider': 'codex',          # codex (your local Codex CLI login) | anthropic | openai (any OpenAI-compatible server: OpenAI, Ollama, LM Studio, OpenRouter...) | demo
+	'provider': 'codex',          # claude (your Claude Code login) | codex (your Codex CLI login) | anthropic (API key) | openai (any OpenAI-compatible server: OpenAI, Ollama, LM Studio, OpenRouter...) | demo
 	'model': 'gpt-5.6-luna',
-	'effort': 'low',              # codex and anthropic: low | medium | high | xhigh | max, or '' to omit
+	'effort': 'low',              # claude, codex and anthropic: low | medium | high | xhigh | max, or '' to omit
 	'api_key': '',                # empty: use ANTHROPIC_API_KEY / OPENAI_API_KEY from the environment
 	'base_url': '',               # empty: provider default
 	'suggestions': 3,
@@ -99,11 +99,14 @@ def ask(label, current):
 	return answer or current
 
 
-DEFAULT_MODELS = {'codex': 'gpt-5.6-luna', 'anthropic': 'claude-opus-5-5', 'openai': 'llama3.2', 'demo': 'demo'}
+DEFAULT_MODELS = {'claude': 'claude-opus-5-5', 'codex': 'gpt-5.6-luna', 'anthropic': 'claude-opus-5-5', 'openai': 'llama3.2', 'demo': 'demo'}
+EFFORT_PROVIDERS = ('claude', 'codex', 'anthropic')
 
 
 def detect_provider():
-	"""Pick a sensible provider from what's on this machine: Codex CLI, then an Anthropic key, then a local Ollama."""
+	"""Pick a sensible provider from what's on this machine: Claude Code, Codex CLI, an Anthropic key, then a local Ollama."""
+	if shutil.which('claude'):
+		return 'claude'
 	if shutil.which('codex'):
 		return 'codex'
 	if os.environ.get('ANTHROPIC_API_KEY'):
@@ -119,7 +122,7 @@ def configure(provider_default=None):
 		config['provider'] = provider_default
 		config['model'] = DEFAULT_MODELS[provider_default]
 	print(c('1', 'shellglot setup') + c('2', f'  (saved to {CONFIG_PATH}, Enter keeps the current value)'))
-	provider = ask('Provider: codex (local Codex CLI login), anthropic, openai (any OpenAI-compatible server, e.g. Ollama), demo', config['provider'])
+	provider = ask('Provider: claude (Claude Code login), codex (Codex CLI login), anthropic (API key), openai (any OpenAI-compatible server, e.g. Ollama), demo', config['provider'])
 	if provider not in PROVIDERS:
 		raise ShellglotError(f'unknown provider "{provider}"')
 	if provider != config['provider']:
@@ -128,11 +131,11 @@ def configure(provider_default=None):
 	config['provider'] = provider
 	if provider != 'demo':
 		config['model'] = ask('Model', config['model'])
-		if provider in ('codex', 'anthropic'):
+		if provider in EFFORT_PROVIDERS:
 			config['effort'] = ask('Effort (low is fastest; "-" to omit)', config['effort'] or '-').replace('-', '')
 		if provider == 'openai':
 			config['base_url'] = ask('Base URL', config['base_url'] or OPENAI_DEFAULT_BASE_URL)
-		if provider != 'codex':
+		if provider in ('anthropic', 'openai'):
 			env_name = 'ANTHROPIC_API_KEY' if provider == 'anthropic' else 'OPENAI_API_KEY'
 			key = getpass.getpass(f'  API key (leave empty to use ${env_name}; input hidden): ').strip()
 			if key:
@@ -173,84 +176,127 @@ def build_context():
 
 # ---------------------------------------------------------------- providers
 
-def stream_anthropic(config, system, user):
+ANTHROPIC_DEFAULT_BASE_URL = 'https://api.anthropic.com'
+
+
+def post_stream(url, body, headers, retries=2):
+	"""POST a JSON body and return the open streaming response, retrying rate limits and server errors."""
+	request = urllib.request.Request(url, data=json.dumps(body).encode(), headers={'Content-Type': 'application/json', **headers})
+	for attempt in range(retries + 1):
+		try:
+			return urllib.request.urlopen(request, timeout=120)
+		except urllib.error.HTTPError as e:
+			retryable = e.code in (408, 409, 429) or e.code >= 500
+			if not retryable or attempt == retries:
+				raise
+			delay = e.headers.get('retry-after', '')
+			time.sleep(min(float(delay), 20) if delay.replace('.', '', 1).isdigit() else 2 ** attempt)
+		except urllib.error.URLError:
+			if attempt == retries:
+				raise
+			time.sleep(2 ** attempt)
+
+
+def sse_events(response):
+	"""Yield (event, data) pairs from a server-sent events stream."""
+	event, data = None, []
+	with response:
+		for raw in response:
+			line = raw.decode(errors='replace').rstrip('\r\n')
+			if not line:
+				if data:
+					yield event, '\n'.join(data)
+				event, data = None, []
+			elif line.startswith('event:'):
+				event = line[6:].strip()
+			elif line.startswith('data:'):
+				data.append(line[5:].strip())
+	if data:
+		yield event, '\n'.join(data)
+
+
+def http_error_message(e):
+	"""The API's own error message from an HTTP error, if it sent one."""
+	body = e.read().decode(errors='replace')
 	try:
-		import anthropic
-	except ImportError:
-		raise ShellglotError('the anthropic provider needs the Anthropic Python SDK: `sudo apt install python3-anthropic`, '
-			'`pip install anthropic`, or reinstall with ./install.sh; or pick another provider with `shellglot config`')
-	client_options = {}
-	if config['api_key']:
-		client_options['api_key'] = config['api_key']
-	if config['base_url']:
-		client_options['base_url'] = config['base_url']
-	client = anthropic.Anthropic(**client_options)
-	extra_body = {}
-	extra_headers = {}
+		return json.loads(body)['error']['message']
+	except (ValueError, KeyError, TypeError):
+		return body[:300] or e.reason
+
+
+def stream_anthropic(config, system, user):
+	"""Call the Anthropic Messages API directly over HTTP, streaming the reply."""
+	api_key = config['api_key'] or os.environ.get('ANTHROPIC_API_KEY', '')
+	if not api_key:
+		raise ShellglotError('no Anthropic API key: set ANTHROPIC_API_KEY or run `shellglot config` (or use the claude provider with your Claude subscription)')
+	base_url = (config['base_url'] or ANTHROPIC_DEFAULT_BASE_URL).rstrip('/')
+	headers = {'x-api-key': api_key, 'anthropic-version': '2023-06-01'}
+	body = {
+		'model': config['model'],
+		'max_tokens': 8000,
+		'stream': True,
+		'system': system,
+		'messages': [{'role': 'user', 'content': user}],
+	}
 	if config['effort']:
-		extra_body['output_config'] = {'effort': config['effort']}
+		body['output_config'] = {'effort': config['effort']}
 	if config['model'] in FALLBACK_MODELS:
 		# On a safety decline, let the API re-run the request on its recommended fallback model.
-		extra_headers['anthropic-beta'] = 'server-side-fallback-2026-07-01'
-		extra_body['fallbacks'] = 'default'
+		headers['anthropic-beta'] = 'server-side-fallback-2026-07-01'
+		body['fallbacks'] = 'default'
 	try:
-		with client.messages.stream(
-			model=config['model'],
-			max_tokens=8000,
-			system=system,
-			messages=[{'role': 'user', 'content': user}],
-			extra_body=extra_body or None,
-			extra_headers=extra_headers or None,
-		) as stream:
-			yield from stream.text_stream
-			final = stream.get_final_message()
-	except anthropic.AuthenticationError:
-		raise ShellglotError('authentication failed: set ANTHROPIC_API_KEY or run `shellglot config`')
-	except anthropic.NotFoundError:
-		raise ShellglotError(f'model "{config["model"]}" not found; run `shellglot config`')
-	except anthropic.RateLimitError:
-		raise ShellglotError('rate limited; try again in a moment')
-	except anthropic.APIStatusError as e:
-		raise ShellglotError(f'API error {e.status_code}: {e.message}')
-	except anthropic.APIConnectionError:
-		raise ShellglotError('could not reach the Anthropic API; check your connection')
-	if final.stop_reason == 'refusal':
+		response = post_stream(f'{base_url}/v1/messages', body, headers)
+	except urllib.error.HTTPError as e:
+		if e.code == 401:
+			raise ShellglotError('authentication failed: check ANTHROPIC_API_KEY or run `shellglot config`')
+		if e.code == 404:
+			raise ShellglotError(f'model "{config["model"]}" not found; run `shellglot config`')
+		if e.code == 429:
+			raise ShellglotError('rate limited; try again in a moment')
+		raise ShellglotError(f'API error {e.code}: {http_error_message(e)}')
+	except urllib.error.URLError as e:
+		raise ShellglotError(f'could not reach {base_url}: {e.reason}')
+	stop_reason = None
+	for event, data in sse_events(response):
+		try:
+			payload = json.loads(data)
+		except json.JSONDecodeError:
+			continue
+		if event == 'content_block_delta' and (payload.get('delta') or {}).get('type') == 'text_delta':
+			yield payload['delta'].get('text', '')
+		elif event == 'message_delta':
+			stop_reason = (payload.get('delta') or {}).get('stop_reason') or stop_reason
+		elif event == 'error':
+			raise ShellglotError(f'API error: {(payload.get("error") or {}).get("message", "unknown")}')
+	if stop_reason == 'refusal':
 		raise ShellglotError('the model declined this request')
 
 
 def stream_openai(config, system, user):
 	base_url = (config['base_url'] or OPENAI_DEFAULT_BASE_URL).rstrip('/')
 	api_key = config['api_key'] or os.environ.get('OPENAI_API_KEY', '')
-	body = json.dumps({
+	body = {
 		'model': config['model'],
 		'stream': True,
 		'messages': [{'role': 'system', 'content': system}, {'role': 'user', 'content': user}],
-	}).encode()
-	headers = {'Content-Type': 'application/json'}
-	if api_key:
-		headers['Authorization'] = f'Bearer {api_key}'
-	request = urllib.request.Request(f'{base_url}/chat/completions', data=body, headers=headers)
+	}
+	headers = {'Authorization': f'Bearer {api_key}'} if api_key else {}
 	try:
-		response = urllib.request.urlopen(request, timeout=120)
+		response = post_stream(f'{base_url}/chat/completions', body, headers)
 	except urllib.error.HTTPError as e:
-		raise ShellglotError(f'API error {e.code}: {e.read().decode(errors="replace")[:300]}')
+		raise ShellglotError(f'API error {e.code}: {http_error_message(e)}')
 	except urllib.error.URLError as e:
 		raise ShellglotError(f'could not reach {base_url}: {e.reason}')
-	with response:
-		for raw in response:
-			line = raw.decode(errors='replace').strip()
-			if not line.startswith('data:'):
-				continue
-			data = line[5:].strip()
-			if data == '[DONE]':
-				break
-			try:
-				choices = json.loads(data).get('choices') or [{}]
-			except json.JSONDecodeError:
-				continue
-			text = (choices[0].get('delta') or {}).get('content')
-			if text:
-				yield text
+	for _, data in sse_events(response):
+		if data == '[DONE]':
+			break
+		try:
+			choices = json.loads(data).get('choices') or [{}]
+		except json.JSONDecodeError:
+			continue
+		text = (choices[0].get('delta') or {}).get('content')
+		if text:
+			yield text
 
 
 DEMO_SUGGESTIONS = [
@@ -351,7 +397,70 @@ def stream_codex(config, system, user):
 		workdir.cleanup()
 
 
-PROVIDERS = {'codex': stream_codex, 'anthropic': stream_anthropic, 'openai': stream_openai, 'demo': stream_demo}
+def stream_claude(config, system, user):
+	"""Run the local Claude Code CLI non-interactively, so requests use its login (a Claude subscription or its key).
+
+	Claude Code streams partial messages, so suggestions arrive one by one.
+	"""
+	claude = shutil.which('claude')
+	if not claude:
+		raise ShellglotError('the claude CLI is not on PATH; install Claude Code or pick another provider with `shellglot config`')
+	# Like Codex: no tools at all, nothing loaded from your settings, MCP servers or the working directory,
+	# run in a fresh empty directory, and stopped if it starts a tool call anyway.
+	workdir = tempfile.TemporaryDirectory(prefix='shellglot-claude-')
+	command = [
+		claude, '-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages',
+		'--tools', '', '--strict-mcp-config', '--disable-slash-commands', '--setting-sources', '',
+		'--no-session-persistence', '--system-prompt', system, '--model', config['model'],
+	]
+	if config['effort']:
+		command += ['--effort', config['effort']]
+	# A nested run (shellglot used from inside Claude Code's own shell) would otherwise be refused.
+	env = {k: v for k, v in os.environ.items() if k not in ('CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT')}
+	stderr = tempfile.TemporaryFile(mode='w+')
+	process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=stderr, text=True, cwd=workdir.name, env=env)
+	try:
+		process.stdin.write(user)
+		process.stdin.close()
+		error = None
+		for line in process.stdout:
+			try:
+				event = json.loads(line)
+			except json.JSONDecodeError:
+				continue
+			kind = event.get('type')
+			if kind == 'stream_event':
+				inner = event.get('event') or {}
+				block = inner.get('content_block') or {}
+				if inner.get('type') == 'content_block_start' and block.get('type') not in CLAUDE_TEXT_BLOCKS:
+					process.kill()
+					raise ShellglotError(f'claude tried to use a tool ({block.get("type")}), so shellglot stopped it')
+				delta = inner.get('delta') or {}
+				if inner.get('type') == 'content_block_delta' and delta.get('type') == 'text_delta':
+					yield delta.get('text', '')
+				if inner.get('type') == 'message_delta' and delta.get('stop_reason') == 'refusal':
+					error = 'the model declined this request'
+			elif kind == 'result' and event.get('is_error'):
+				error = event.get('result') or event.get('subtype') or 'claude failed'
+		process.wait()
+		if error:
+			raise ShellglotError(f'claude: {error}')
+		if process.returncode:
+			stderr.seek(0)
+			tail = stderr.read().strip().splitlines()
+			raise ShellglotError(f'claude: {tail[-1] if tail else f"exited with code {process.returncode}"}')
+	finally:
+		if process.poll() is None:
+			process.kill()
+			process.wait()
+		stderr.close()
+		workdir.cleanup()
+
+
+# Claude content blocks that are only text; anything else (tool_use, server_tool_use...) is a tool call.
+CLAUDE_TEXT_BLOCKS = {'text', 'thinking', 'redacted_thinking'}
+
+PROVIDERS = {'claude': stream_claude, 'codex': stream_codex, 'anthropic': stream_anthropic, 'openai': stream_openai, 'demo': stream_demo}
 
 
 def iter_suggestions(chunks):

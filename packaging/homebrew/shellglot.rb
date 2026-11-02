@@ -9,14 +9,9 @@ class Shellglot < Formula
 
   depends_on "python@3.13"
 
-  # The anthropic provider needs the Anthropic Python SDK, installed from PyPI into a private virtualenv.
-  allow_network_access! :build
-
   def install
-    python = Formula["python@3.13"].opt_bin/"python3.13"
-    system python, "-m", "venv", libexec
-    system libexec/"bin/pip", "install", "--quiet", "anthropic==2.3.0"
-    system "make", "install", "PREFIX=#{prefix}", "PYTHON=#{libexec}/bin/python"
+    # shellglot uses only the Python standard library.
+    system "make", "install", "PREFIX=#{prefix}", "PYTHON=#{Formula["python@3.13"].opt_bin}/python3.13"
   end
 
   def caveats

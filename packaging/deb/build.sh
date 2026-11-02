@@ -21,7 +21,6 @@ Version: $version
 Architecture: all
 Maintainer: Chuwee <https://github.com/Chuwee/shellglot>
 Depends: python3 (>= 3.8)
-Recommends: python3-anthropic
 Section: utils
 Priority: optional
 Homepage: https://github.com/Chuwee/shellglot
@@ -29,7 +28,8 @@ Installed-Size: $(du -sk "$stage/usr" | cut -f1)
 Description: shell command suggestions from plain words, with every part explained
  Ask your terminal for a command in plain words and get a few suggestions,
  each with a letter over every part of the command and a line explaining it.
- Works with the Codex CLI, the Anthropic API or any OpenAI-compatible server.
+ Works with Claude Code, the Codex CLI, the Anthropic API or any OpenAI-compatible
+ server.
  .
  Run  shellglot <what you want to do> ; the command you pick is copied to
  the clipboard. Optionally, add  eval "\$(shellglot init bash)"  to ~/.bashrc

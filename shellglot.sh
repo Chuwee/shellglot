@@ -15,9 +15,7 @@ fi
 
 _shellglot_py() {
 	local script="$SHELLGLOT_HOME/shellglot.py"
-	if [ -x "$SHELLGLOT_HOME/.venv/bin/python" ]; then
-		"$SHELLGLOT_HOME/.venv/bin/python" "$script" "$@"
-	elif [ -x "$script" ]; then
+	if [ -x "$script" ]; then
 		# Packaged installs point the script's shebang at the right Python.
 		"$script" "$@"
 	else
@@ -85,6 +83,15 @@ shellglot() {
 		on) _shellglot_on ;;
 		off) _shellglot_off ;;
 		config | setup) _shellglot_py config ;;
+		--version) _shellglot_py --version ;;
+		init)
+			# `shellglot init bash` prints the hook; `shellglot init a git repo` is a prompt.
+			if [ $# -eq 2 ] && { [ "$2" = bash ] || [ "$2" = zsh ]; }; then
+				_shellglot_py "$@"
+			else
+				_shellglot_suggest "$@"
+			fi
+			;;
 		status) [ -n "$SHELLGLOT_MODE" ] && echo 'shellglot mode: on' || echo 'shellglot mode: off' ;;
 		'' | -h | --help | help)
 			cat <<-'EOF'
