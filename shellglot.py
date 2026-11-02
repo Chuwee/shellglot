@@ -71,7 +71,7 @@ class ShellglotError(Exception):
 # ---------------------------------------------------------------- config
 
 def migrate_config():
-	"""Move settings saved under the old bashglot name to the shglot config directory."""
+	"""Move settings saved under the old bashglot name to the shellglot config directory."""
 	if not os.path.exists(CONFIG_DIR) and os.path.isdir(OLD_CONFIG_DIR):
 		os.rename(OLD_CONFIG_DIR, CONFIG_DIR)
 
@@ -133,7 +133,7 @@ def configure(provider_default=None):
 	if provider_default and provider_default != config['provider']:
 		config['provider'] = provider_default
 		config['model'] = DEFAULT_MODELS[provider_default]
-	print(c('1', 'shglot setup') + c('2', f'  (saved to {CONFIG_PATH}, Enter keeps the current value)'))
+	print(c('1', 'shellglot setup') + c('2', f'  (saved to {CONFIG_PATH}, Enter keeps the current value)'))
 	provider = ask('Provider: claude (Claude Code login), codex (Codex CLI login), anthropic (API key), openai (any OpenAI-compatible server, e.g. Ollama), demo', config['provider'])
 	if provider not in PROVIDERS:
 		raise ShellglotError(f'unknown provider "{provider}"')
@@ -240,7 +240,7 @@ def stream_anthropic(config, system, user):
 	"""Call the Anthropic Messages API directly over HTTP, streaming the reply."""
 	api_key = config['api_key'] or os.environ.get('ANTHROPIC_API_KEY', '')
 	if not api_key:
-		raise ShellglotError('no Anthropic API key: set ANTHROPIC_API_KEY or run `shglot config` (or use the claude provider with your Claude subscription)')
+		raise ShellglotError('no Anthropic API key: set ANTHROPIC_API_KEY or run `shgl config` (or use the claude provider with your Claude subscription)')
 	base_url = (config['base_url'] or ANTHROPIC_DEFAULT_BASE_URL).rstrip('/')
 	headers = {'x-api-key': api_key, 'anthropic-version': '2023-06-01'}
 	body = {
@@ -260,9 +260,9 @@ def stream_anthropic(config, system, user):
 		response = post_stream(f'{base_url}/v1/messages', body, headers)
 	except urllib.error.HTTPError as e:
 		if e.code == 401:
-			raise ShellglotError('authentication failed: check ANTHROPIC_API_KEY or run `shglot config`')
+			raise ShellglotError('authentication failed: check ANTHROPIC_API_KEY or run `shgl config`')
 		if e.code == 404:
-			raise ShellglotError(f'model "{config["model"]}" not found; run `shglot config`')
+			raise ShellglotError(f'model "{config["model"]}" not found; run `shgl config`')
 		if e.code == 429:
 			raise ShellglotError('rate limited; try again in a moment')
 		raise ShellglotError(f'API error {e.code}: {http_error_message(e)}')
@@ -357,7 +357,7 @@ def stream_codex(config, system, user):
 	"""
 	codex = shutil.which('codex')
 	if not codex:
-		raise ShellglotError('the codex CLI is not on PATH; install it or pick another provider with `shglot config`')
+		raise ShellglotError('the codex CLI is not on PATH; install it or pick another provider with `shgl config`')
 	# Codex is an agent, but shellglot only wants text. Layers, since none of them is complete on its own:
 	# a read-only sandbox, a fresh empty working directory, the tool features switched off, and (below)
 	# stopping Codex as soon as it starts any tool call anyway.
@@ -416,7 +416,7 @@ def stream_claude(config, system, user):
 	"""
 	claude = shutil.which('claude')
 	if not claude:
-		raise ShellglotError('the claude CLI is not on PATH; install Claude Code or pick another provider with `shglot config`')
+		raise ShellglotError('the claude CLI is not on PATH; install Claude Code or pick another provider with `shgl config`')
 	# Like Codex: no tools at all, nothing loaded from your settings, MCP servers or the working directory,
 	# run in a fresh empty directory, and stopped if it starts a tool call anyway.
 	workdir = tempfile.TemporaryDirectory(prefix='shellglot-claude-')
@@ -730,7 +730,7 @@ def first_run_setup():
 		config['provider'] = detected
 		config['model'] = DEFAULT_MODELS[detected]
 		save_config(config)
-		print(c('2', f'  using {detected} / {config["model"]}; change it any time with `shglot config`'))
+		print(c('2', f'  using {detected} / {config["model"]}; change it any time with `shgl config`'))
 	else:
 		configure(detected)
 	print()
@@ -742,7 +742,7 @@ def suggest(prompt, out_path):
 	config = load_config()
 	provider = PROVIDERS.get(config['provider'])
 	if not provider:
-		raise ShellglotError(f'unknown provider "{config["provider"]}"; run `shglot config`')
+		raise ShellglotError(f'unknown provider "{config["provider"]}"; run `shgl config`')
 	count = max(1, min(int(config['suggestions']), 9))
 	user = f'Task: {prompt}'
 	if config['send_context']:
@@ -782,7 +782,7 @@ def suggest(prompt, out_path):
 	paste = paste_keys()
 	shell = 'zsh' if os.path.basename(os.environ.get('SHELL', '')) == 'zsh' else 'bash'
 	sys.stderr.write(f'\r\x1b[K {c("32", f"copied [{key}]")} {c("2", f"paste it with {paste}, edit it if you like, then press Enter")}\n')
-	sys.stderr.write(f' {c("2", f"tip: add  eval \"$(shglot init {shell})\"  to ~/.{shell}rc to get it on your prompt without pasting")}\n')
+	sys.stderr.write(f' {c("2", f"tip: add  eval \"$(shgl init {shell})\"  to ~/.{shell}rc to get it on your prompt without pasting")}\n')
 
 
 def is_wsl():
@@ -840,7 +840,7 @@ def paste_keys():
 
 
 def hook_path():
-	"""Find shellglot.sh: next to this script in a checkout and in packaged installs (where bin/shglot links here)."""
+	"""Find shellglot.sh: next to this script in a checkout and in packaged installs (where bin/shgl links here)."""
 	path = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'shellglot.sh')
 	if not os.path.exists(path):
 		raise ShellglotError(f'cannot find the shell hook (looked for {path})')
@@ -848,20 +848,20 @@ def hook_path():
 
 
 def init(shell):
-	"""Print the line that loads shellglot into a shell, for `eval "$(shglot init bash)"` in an rc file."""
+	"""Print the line that loads shellglot into a shell, for `eval "$(shgl init bash)"` in an rc file."""
 	import shlex
 	print(f'source {shlex.quote(hook_path())}')
 
 
 def main():
-	parser = argparse.ArgumentParser(prog='shglot', description=__doc__)
+	parser = argparse.ArgumentParser(prog='shgl', description=__doc__)
 	parser.add_argument('--version', action='version', version=f'shellglot {__version__}')
 	sub = parser.add_subparsers(dest='action', required=True)
 	suggest_parser = sub.add_parser('suggest', help='suggest commands for a prompt')
 	suggest_parser.add_argument('--out', help='file to write the chosen command to')
 	suggest_parser.add_argument('prompt', nargs='+')
 	sub.add_parser('config', help='set the provider, model and key')
-	init_parser = sub.add_parser('init', help='print the shell hook; add `eval "$(shglot init bash)"` to your rc file')
+	init_parser = sub.add_parser('init', help='print the shell hook; add `eval "$(shgl init bash)"` to your rc file')
 	init_parser.add_argument('shell', choices=['bash', 'zsh'])
 	argv = sys.argv[1:]
 	if not argv:
@@ -869,10 +869,10 @@ def main():
 		return
 	if argv[0] in ('on', 'off', 'status') and len(argv) == 1:
 		shell = 'zsh' if os.path.basename(os.environ.get('SHELL', '')) == 'zsh' else 'bash'
-		sys.stderr.write(f'shglot {argv[0]} needs the shell hook. Add this to ~/.{shell}rc and open a new terminal:\n'
-			f'  eval "$(shglot init {shell})"\n')
+		sys.stderr.write(f'shgl {argv[0]} needs the shell hook. Add this to ~/.{shell}rc and open a new terminal:\n'
+			f'  eval "$(shgl init {shell})"\n')
 		sys.exit(2)
-	# `shglot <prompt>` is a suggestion; only an exact subcommand form is treated as one.
+	# `shgl <prompt>` is a suggestion; only an exact subcommand form is treated as one.
 	is_subcommand = (
 		argv[0] in ('suggest', '-h', '--help', '--version')
 		or (argv[0] in ('config', 'setup') and len(argv) == 1)
@@ -892,7 +892,7 @@ def main():
 		else:
 			suggest(' '.join(args.prompt), args.out)
 	except ShellglotError as e:
-		sys.stderr.write(f'\r\x1b[K {c("1;31", "shglot:")} {clean(str(e))}\n')
+		sys.stderr.write(f'\r\x1b[K {c("1;31", "shgl:")} {clean(str(e))}\n')
 		sys.exit(1)
 	except KeyboardInterrupt:
 		sys.stderr.write('\r\x1b[K')

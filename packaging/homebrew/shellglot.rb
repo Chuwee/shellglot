@@ -16,14 +16,14 @@ class Shellglot < Formula
 
   def caveats
     <<~EOS
-      Run `shglot <what you want to do>`; the command you pick is copied to the clipboard.
+      Run `shgl <what you want to do>`; the command you pick is copied to the clipboard.
       To get picks straight onto your prompt instead, add this to ~/.zshrc (or ~/.bashrc, with "bash"):
-        eval "$(shglot init zsh)"
+        eval "$(shgl init zsh)"
     EOS
   end
 
   test do
-    assert_match version.to_s, shell_output("#{bin}/shglot --version")
-    assert_match "shellglot.sh", shell_output("#{bin}/shglot init zsh")
+    assert_match version.to_s, shell_output("#{bin}/shgl --version")
+    assert_match "shellglot.sh", shell_output("#{bin}/shgl init zsh")
   end
 end
