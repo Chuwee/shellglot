@@ -78,6 +78,7 @@ def load_config():
 	config = dict(DEFAULTS)
 	try:
 		with open(CONFIG_PATH) as f:
+			restrict(f.fileno())  # an older or hand-made file may be readable by others, and it can hold an API key
 			config.update(json.load(f))
 	except FileNotFoundError:
 		pass
@@ -86,9 +87,18 @@ def load_config():
 	return config
 
 
+def restrict(fd):
+	"""Make an open config file readable and writable by its owner only."""
+	try:
+		os.fchmod(fd, 0o600)
+	except (AttributeError, OSError):  # no fchmod (Windows), or a file we don't own
+		pass
+
+
 def save_config(config):
-	os.makedirs(CONFIG_DIR, exist_ok=True)
+	os.makedirs(CONFIG_DIR, mode=0o700, exist_ok=True)
 	fd = os.open(CONFIG_PATH, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+	restrict(fd)  # O_CREAT's mode only applies to a new file
 	with os.fdopen(fd, 'w') as f:
 		json.dump(config, f, indent=2)
 		f.write('\n')
